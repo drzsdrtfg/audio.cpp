@@ -91,6 +91,7 @@ QwenDecoderHiddenConfig hidden_config_from_runtime(const QwenCausalDecodeRuntime
     QwenDecoderHiddenConfig out;
     out.stack = config.decoder.stack;
     out.hidden_mode = config.decoder.logits_mode;
+    out.static_cache_type = config.decoder.static_cache_type;
     return out;
 }
 

@@ -21,6 +21,10 @@ void validate_config(const QwenCausalDecoderConfig & config) {
     if (config.stack.layers <= 0) {
         throw std::runtime_error("QwenCausalDecoderConfig requires a positive layer count");
     }
+    if (config.static_cache_type != GGML_TYPE_F32 && config.static_cache_type != GGML_TYPE_F16 &&
+        config.static_cache_type != GGML_TYPE_BF16) {
+        throw std::runtime_error("QwenCausalDecoderConfig static cache type must be f32, f16, or bf16");
+    }
 }
 
 void validate_hidden_config(const QwenDecoderHiddenConfig & config) {
@@ -30,12 +34,23 @@ void validate_hidden_config(const QwenDecoderHiddenConfig & config) {
     if (config.stack.layers <= 0) {
         throw std::runtime_error("QwenDecoderHiddenConfig requires a positive layer count");
     }
+    if (config.static_cache_type != GGML_TYPE_F32 && config.static_cache_type != GGML_TYPE_F16 &&
+        config.static_cache_type != GGML_TYPE_BF16) {
+        throw std::runtime_error("QwenDecoderHiddenConfig static cache type must be f32, f16, or bf16");
+    }
 }
 
 void validate_steps(int64_t steps, const char * label) {
     if (steps <= 0) {
         throw std::runtime_error(std::string(label) + " requires positive step count");
     }
+}
+
+runtime::TransformerKVCacheOptions transformer_cache_options(ggml_type type) {
+    runtime::TransformerKVCacheOptions out;
+    out.allow_f16_storage = type == GGML_TYPE_F16;
+    out.allow_bf16_storage = type == GGML_TYPE_BF16;
+    return out;
 }
 
 core::TensorValue select_hidden_steps(
@@ -53,6 +68,7 @@ QwenDecoderHiddenConfig hidden_config_from_causal(const QwenCausalDecoderConfig 
     QwenDecoderHiddenConfig out;
     out.stack = config.stack;
     out.hidden_mode = config.logits_mode;
+    out.static_cache_type = config.static_cache_type;
     return out;
 }
 
@@ -127,11 +143,11 @@ QwenDecoderHiddenStaticCacheOutputs QwenDecoderHiddenModule::build_static_cache_
     for (const auto & layer : weights.stack.layers) {
         cache_keys.push_back(core::make_tensor(
             ctx,
-            GGML_TYPE_F32,
+            config_.static_cache_type,
             core::TensorShape::from_dims({1, cache_steps, config_.stack.num_key_value_heads, config_.stack.head_dim})));
         cache_values.push_back(core::make_tensor(
             ctx,
-            GGML_TYPE_F32,
+            config_.static_cache_type,
             core::TensorShape::from_dims({1, cache_steps, config_.stack.num_key_value_heads, config_.stack.head_dim})));
         auto out = layer_module.build_with_static_cache_tail(
             ctx,
@@ -151,7 +167,12 @@ QwenDecoderHiddenStaticCacheOutputs QwenDecoderHiddenModule::build_static_cache_
     return {
         std::move(x),
         hidden,
-        runtime::TransformerKVCache(cache_steps, step_elems, std::move(cache_keys), std::move(cache_values)),
+        runtime::TransformerKVCache(
+            cache_steps,
+            step_elems,
+            std::move(cache_keys),
+            std::move(cache_values),
+            transformer_cache_options(config_.static_cache_type)),
     };
 }
 
@@ -188,12 +209,12 @@ QwenDecoderHiddenBatchedStaticCacheOutputs QwenDecoderHiddenModule::build_static
     for (const auto & layer : weights.stack.layers) {
         cache_keys.push_back(core::make_tensor(
             ctx,
-            GGML_TYPE_F32,
+            config_.static_cache_type,
             core::TensorShape::from_dims(
                 {batch_size, cache_steps, config_.stack.num_key_value_heads, config_.stack.head_dim})));
         cache_values.push_back(core::make_tensor(
             ctx,
-            GGML_TYPE_F32,
+            config_.static_cache_type,
             core::TensorShape::from_dims(
                 {batch_size, cache_steps, config_.stack.num_key_value_heads, config_.stack.head_dim})));
         auto out = layer_module.build_with_static_cache_tail_batched(
@@ -219,7 +240,8 @@ QwenDecoderHiddenBatchedStaticCacheOutputs QwenDecoderHiddenModule::build_static
             batch_size,
             row_elems,
             std::move(cache_keys),
-            std::move(cache_values)),
+            std::move(cache_values),
+            transformer_cache_options(config_.static_cache_type)),
     };
 }
 
