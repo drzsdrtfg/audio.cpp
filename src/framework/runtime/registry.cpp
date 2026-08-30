@@ -6,6 +6,7 @@
 #include "engine/framework/io/filesystem.h"
 #include "engine/models/marblenet_vad/session.h"
 #include "engine/models/silero_vad/session.h"
+#include "engine/models/smart_turn/session.h"
 
 #include "model_registry_includes.inc"
 
@@ -219,6 +220,7 @@ ModelRegistry make_default_registry(const std::optional<std::filesystem::path> &
     const std::vector<std::shared_ptr<IVoiceModelLoader>> available_loaders = {
         engine::models::silero_vad::make_silero_vad_loader(),
         engine::models::marblenet_vad::make_marblenet_vad_loader(),
+        engine::models::smart_turn::make_smart_turn_loader(),
 #include "model_registry_loaders.inc"
     };
     if (!config_path.has_value()) {

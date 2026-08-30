@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "family": "smart_turn",
+  "display_name": "Smart Turn v3",
+  "description": "pipecat-ai Smart Turn v3 semantic turn detection: Whisper-Tiny encoder with attention-pool classifier that predicts whether an 8-second utterance ends a complete turn, with offline inference and a tunable completion threshold.",
+  "category": "speech_analysis",
+  "status": "community",
+  "tasks": [
+    "vad"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "multilingual"
+  ],
+  "runtime": {
+    "tags": [
+      "cpu"
+    ]
+  },
+  "capabilities": {
+    "vad": [
+      "speech_segments"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "threshold",
+        "type": "float",
+        "description": "Completion probability threshold above which the turn is predicted complete; default 0.5.",
+        "required": false,
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.5
+      }
+    ]
+  }
+}

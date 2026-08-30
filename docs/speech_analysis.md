@@ -4,6 +4,7 @@
 |---|---|---|---|
 | Silero VAD | `silero_vad` | `vad` | [Silero VAD](#silero-vad) |
 | MarbleNet VAD | `marblenet_vad` | `vad` | [MarbleNet VAD](#marblenet-vad) |
+| Smart Turn | `smart_turn` | `vad` | [Smart Turn](#smart-turn) |
 | Sortformer Diarization | `sortformer_diar` | `diar` | [Sortformer Diarization](#sortformer-diarization) |
 | MMS Forced Aligner | `mms_forced_aligner` | `align` | [MMS Forced Aligner](#mms-forced-aligner) |
 | Qwen3 Forced Aligner | `qwen3_forced_aligner` | `align` | [Qwen3 Forced Aligner](models/qwen3.md#qwen3-forced-aligner) |
@@ -97,6 +98,46 @@ audiocpp_cli --task vad --family marblenet_vad --model assets/framework/models/m
 | `--audio` | WAV path | required | Input audio. |
 | `--segments-out` | JSON path | not set | Write speech segments. |
 | `--request-option threshold=<float>` | float | `0.5` | Speech probability threshold. |
+
+## Smart Turn
+
+Smart Turn (pipecat-ai, BSD-2-Clause) is a *semantic* turn detector: given an utterance of up to
+8 seconds it predicts whether the speaker has finished their turn (`turn_complete`) or is going
+to continue (`turn_incomplete`). It uses a Whisper-Tiny encoder with an attention-pool classifier
+and runs on every audio.cpp backend. Unlike Silero/MarbleNet it is not a speech segmenter; the
+returned "segment" spans the analyzed 8-second window and carries the completion probability.
+
+| Field | Value |
+|---|---|
+| Family | `smart_turn` |
+| Model directory | Converted weights, e.g. `models/smart_turn` (see below) |
+| Task | `vad` |
+| Modes | `offline` |
+| Output | Turn decision through `--segments-out`; raw probability in the `vad_state` artifact |
+| Window | Keeps the last 8 seconds of input, left-pads shorter audio with zeros |
+
+```bash
+audiocpp_cli --task vad --family smart_turn --model models/smart_turn --backend cuda --audio utterance_16k.wav --segments-out segments.json
+```
+
+| Option | Values | Default | Meaning |
+|---|---|---:|---|
+| `--audio` | WAV path | required | Input audio (mono or stereo, any sample rate; resampled to 16 kHz). |
+| `--request-option threshold=<float>` | float | `0.5` | Completion probability threshold for the `turn_complete` decision. |
+| `--session-option smart_turn.weight_type=<type>` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Weight storage precision. |
+
+### Obtaining the model
+
+The official releases ship ONNX only. Convert them to audio.cpp weights with:
+
+```bash
+pip install onnx onnxruntime numpy safetensors
+python scripts/convert_smart_turn.py --onnx smart-turn-v3.2-gpu.onnx --output models/smart_turn
+```
+
+This writes `smart_turn.safetensors` and `smart_turn_config.json`. The script includes a numpy
+forward-pass self-check against onnxruntime (`--fixtures`). To also build the parity fixtures used
+by `tests/smart_turn/smart_turn_parity.cpp`, see `scripts/smart_turn/build_parity_fixtures.py`.
 
 ## Sortformer Diarization
 

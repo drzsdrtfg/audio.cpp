@@ -505,6 +505,14 @@ add_library(engine_model_marblenet_vad OBJECT
 set_target_properties(engine_model_marblenet_vad PROPERTIES EXCLUDE_FROM_ALL TRUE)
 audiocpp_configure_runtime_object(engine_model_marblenet_vad)
 
+add_library(engine_model_smart_turn OBJECT
+    src/models/smart_turn/assets.cpp
+    src/models/smart_turn/runtime.cpp
+    src/models/smart_turn/session.cpp
+)
+set_target_properties(engine_model_smart_turn PROPERTIES EXCLUDE_FROM_ALL TRUE)
+audiocpp_configure_runtime_object(engine_model_smart_turn)
+
 audiocpp_add_model(roformer
     SOURCES
         src/models/roformer/assets.cpp
@@ -1444,6 +1452,20 @@ audiocpp_add_model(ace_step
         engine::models::ace_step::make_ace_step_loader
 )
 
+audiocpp_add_model(soprano_tts
+    SOURCES
+        src/community_models/soprano_tts/assets.cpp
+        src/community_models/soprano_tts/generator.cpp
+        src/community_models/soprano_tts/session.cpp
+        src/community_models/soprano_tts/text_normalizer.cpp
+        src/community_models/soprano_tts/tokenizer_text.cpp
+        src/community_models/soprano_tts/vocoder.cpp
+    INCLUDES
+        engine/community_models/soprano_tts/session.h
+    LOADERS
+        engine::community_models::soprano_tts::make_soprano_tts_loader
+)
+
 audiocpp_add_model(midashenglm_gen
     SOURCES
         src/models/midashenglm_gen/assets.cpp
@@ -1614,6 +1636,7 @@ set(AUDIOCPP_RUNTIME_OBJECTS
     $<TARGET_OBJECTS:engine_core>
     $<TARGET_OBJECTS:engine_model_silero_vad>
     $<TARGET_OBJECTS:engine_model_marblenet_vad>
+    $<TARGET_OBJECTS:engine_model_smart_turn>
 )
 foreach(model_name IN LISTS AUDIOCPP_LINKED_MODELS)
     list(APPEND AUDIOCPP_RUNTIME_OBJECTS $<TARGET_OBJECTS:engine_model_${model_name}>)
@@ -1871,12 +1894,22 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(index_tts2_warm_bench tests/index_tts2/index_tts2_warm_bench.cpp)
     add_engine_warmbench(irodori_tts_warm_bench tests/irodori_tts/irodori_tts_warm_bench.cpp)
     add_engine_warmbench(marblenet_vad_warm_bench tests/marblenet_vad/marblenet_vad_warm_bench.cpp)
+    add_engine_warmbench(smart_turn_warm_bench tests/smart_turn/smart_turn_warm_bench.cpp)
+    add_engine_warmbench(smart_turn_parity tests/smart_turn/smart_turn_parity.cpp)
+    add_engine_warmbench(smart_turn_mel_dump tests/smart_turn/smart_turn_mel_dump.cpp)
+    target_compile_definitions(smart_turn_parity PRIVATE
+        ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
     add_engine_warmbench(miocodec_warm_bench tests/miocodec/miocodec_warm_bench.cpp)
     add_engine_warmbench(muscriptor_warm_bench tests/muscriptor/muscriptor_warm_bench.cpp)
     add_engine_warmbench(moss_tts_nano_warm_bench tests/moss_tts_nano/moss_tts_nano_warm_bench.cpp)
     add_engine_warmbench(moss_tts_local_warm_bench tests/moss_tts_local/moss_tts_local_warm_bench.cpp)
     add_engine_warmbench(nemotron_asr_warm_bench tests/nemotron_asr/nemotron_asr_warm_bench.cpp)
     add_engine_warmbench(neutts_warm_bench tests/neutts/neutts_warm_bench.cpp)
+    add_engine_warmbench(soprano_warm_bench tests/soprano_tts/soprano_warm_bench.cpp)
+    target_compile_definitions(soprano_warm_bench PRIVATE
+        ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
     add_engine_warmbench(omnivoice_warm_bench tests/omnivoice/omnivoice_warm_bench.cpp)
     add_engine_warmbench(outetts_warm_bench tests/outetts/outetts_warm_bench.cpp)
     add_engine_warmbench(parakeet_warm_bench tests/parakeet_tdt/parakeet_warm_bench.cpp)
@@ -2544,6 +2577,16 @@ if (ENGINE_BUILD_TESTS)
         add_test(
             NAME mms_forced_aligner_session_test
             COMMAND mms_forced_aligner_session_test
+        )
+
+        add_engine_unittest(soprano_text_cleaning_test tests/unittests/test_soprano_text_cleaning.cpp)
+        target_sources(soprano_text_cleaning_test PRIVATE
+            src/community_models/soprano_tts/text_normalizer.cpp
+            src/community_models/soprano_tts/tokenizer_text.cpp)
+        target_include_directories(soprano_text_cleaning_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        add_test(
+            NAME soprano_text_cleaning_test
+            COMMAND soprano_text_cleaning_test
         )
 
         add_engine_unittest(fun_asr_nano_assets_test tests/unittests/test_fun_asr_nano_assets.cpp)
