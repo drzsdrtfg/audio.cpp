@@ -142,23 +142,26 @@ by `tests/smart_turn/smart_turn_parity.cpp`, see `scripts/smart_turn/build_parit
 ### Performance
 
 Measured with `smart_turn_warm_bench` on an 8-second 16 kHz fixture (median of 10 runs,
-`ENGINE_TIMING_ENABLED` breakdown available through `--timing-file`). RTF = wall time / audio
-duration; lower is better. The model runs the fused encoder+head as a single ggml graph.
+`--timing-file` gives a per-stage breakdown). RTF = wall time / audio duration; lower is better.
+The model runs the fused encoder+head as a single ggml graph using flash attention with f16 K/V
+and f32 accumulation, and computes the log-mel with a frame-parallel STFT.
 
 | Backend | Threads | Wall (median) | RTF |
 |---|---:|---:|---:|
 | CPU (i5-10400, fp32) | 1 | 312 ms | 0.039 |
-| CPU | 6 | 65 ms | 0.008 |
+| CPU | 6 | 62 ms | 0.008 |
 | CPU | 12 | 50 ms | 0.006 |
-| Vulkan (Radeon RX Vega, fp32) | 1 | 18.3 ms | 0.0023 |
-| Vulkan | 12 | 15.6 ms | 0.0019 |
-| Vulkan (`smart_turn.weight_type=f16`) | 12 | 15.4 ms | 0.0019 |
+| Vulkan (Radeon RX Vega, fp32) | 6 | 15.8 ms | 0.0020 |
+| Vulkan | 12 | 14.9 ms | 0.0019 |
+| Vulkan (`smart_turn.weight_type=f16`) | 12 | ~14.8 ms | 0.0019 |
 
-On Vulkan the runtime splits into ~4.3 ms of CPU-side preprocessing (16 kHz conversion,
-zero-mean/unit-variance normalization, log-mel) and ~10.3 ms of GPU graph time. Quantized or
-f16 weights change probabilities by at most ~1e-3 and stay within the GPU parity tolerance
-(see `tests/smart_turn/smart_turn_parity.cpp`, which validates 100 real fixtures on both CPU
-and GPU backends).
+On Vulkan the runtime splits into ~4.5 ms of CPU-side preprocessing (16 kHz conversion,
+zero-mean/unit-variance normalization, frame-parallel log-mel) and ~10 ms of GPU graph time.
+The graph is bound by f32 matmul throughput; the Vega GPU has no matrix cores, so fp16 weights
+(`smart_turn.weight_type=f16`) only shave a few percent while shifting probabilities by ~1e-3.
+CPU inference is bound by raw f32 matmul FLOPs (3.3 GFLOP per 8-second window); quantized
+weights measured no CPU gain. Both backends are validated by
+`tests/smart_turn/smart_turn_parity.cpp` (100 real fixtures; CPU tolerance 1e-4, GPU 5e-3).
 
 ## Sortformer Diarization
 

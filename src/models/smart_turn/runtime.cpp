@@ -5,12 +5,20 @@
 #include "engine/framework/core/module.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
+#include "engine/framework/modules/conv_modules.h"
+#include "engine/framework/modules/linear_module.h"
+#include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -19,6 +27,7 @@
 #include <numeric>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -37,6 +46,86 @@ std::shared_ptr<const SmartTurnWeights> require_weights(std::shared_ptr<const Sm
 size_t resolve_feature_threads(const core::ExecutionContext & execution_context) {
     const int configured = execution_context.config().threads;
     return configured > 0 ? static_cast<size_t>(configured) : 0U;
+}
+
+core::TensorValue cast_f16(core::ModuleBuildContext & ctx, const core::TensorValue & value) {
+    auto contiguous = core::ensure_backend_addressable_layout(ctx, value);
+    return core::wrap_tensor(
+        ggml_cast(ctx.ggml, contiguous.tensor, GGML_TYPE_F16),
+        contiguous.shape,
+        GGML_TYPE_F16);
+}
+
+// [batch, steps, hidden] -> [batch, heads, steps, head_dim] contiguous
+core::TensorValue split_heads(core::ModuleBuildContext & ctx, const core::TensorValue & input, int64_t heads) {
+    const int64_t head_dim = input.shape.last_dim() / heads;
+    auto reshaped = core::reshape_tensor(
+        ctx,
+        core::ensure_backend_addressable_layout(ctx, input),
+        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], heads, head_dim}));
+    auto transposed = modules::TransposeModule(
+                          {std::array<int, core::kMaxTensorRank>{0, 2, 1, 3}, reshaped.shape.rank})
+                          .build(ctx, reshaped);
+    return core::ensure_backend_addressable_layout(ctx, transposed);
+}
+
+// Whisper-Tiny encoder stack with flash-attention lowering for the self-attention
+// blocks (k/v in f16, f32 accumulation, no mask: the encoder is bidirectional).
+core::TensorValue build_encoder_stack(
+    core::ModuleBuildContext & ctx,
+    const SmartTurnConfig & cfg,
+    const modules::WhisperEmbeddingConfig & encoder_config,
+    const modules::WhisperEmbeddingWeights & encoder,
+    const core::TensorValue & mel) {
+    const int64_t d = cfg.d_model;
+    const int64_t heads = cfg.n_audio_head;
+    const int64_t steps = cfg.n_audio_ctx;
+
+    const modules::ScaledDotProductAttentionModule attention({
+        d / heads,
+        modules::ScaledDotProductAttentionLowering::Flash,
+        GGML_PREC_F32,
+        modules::AttentionCausality::NonCausal,
+    });
+    const modules::LayerNormModule layer_norm({d, cfg.layer_norm_eps, true, true});
+    const modules::GeluModule gelu({modules::GeluApproximation::ExactErf});
+    const modules::FeedForwardModule mlp({d, cfg.ffn_dim, true, modules::GeluApproximation::ExactErf});
+
+    // Conv frontend: Conv(k3,s1) -> GELU -> Conv(k3,s2) -> GELU, then positions.
+    auto x = modules::Conv1dModule({cfg.n_mels, d, 3, 1, 1, 1, true}).build(ctx, mel, encoder.conv1);
+    x = gelu.build(ctx, x);
+    x = modules::Conv1dModule({d, d, 3, 2, 1, 1, true}).build(ctx, x, encoder.conv2);
+    x = gelu.build(ctx, x);
+    x = modules::TransposeModule({std::array<int, core::kMaxTensorRank>{0, 2, 1}, x.shape.rank}).build(ctx, x);
+    x = core::ensure_backend_addressable_layout(ctx, x);
+    auto pos = core::reshape_tensor(
+        ctx,
+        encoder.positional_embedding,
+        core::TensorShape::from_dims({1, steps, d}));
+    x = modules::AddModule().build(ctx, x, pos);
+
+    for (const auto & layer : encoder.layers) {
+        auto h = layer_norm.build(ctx, x, layer.attention_norm);
+        auto q = modules::LinearModule({d, d, true}).build(ctx, h, layer.attention.query);
+        auto k = modules::LinearModule({d, d, false}).build(ctx, h, layer.attention.key);
+        auto v = modules::LinearModule({d, d, true}).build(ctx, h, layer.attention.value);
+        auto q_heads = split_heads(ctx, q, heads);
+        auto k_heads = split_heads(ctx, cast_f16(ctx, k), heads);
+        auto v_heads = split_heads(ctx, cast_f16(ctx, v), heads);
+        auto context = attention.build(ctx, q_heads, k_heads, v_heads);
+        context = core::reshape_tensor(
+            ctx,
+            core::ensure_backend_addressable_layout(ctx, context),
+            core::TensorShape::from_dims({1, steps, d}));
+        auto attn_out = modules::LinearModule({d, d, true}).build(ctx, context, layer.attention.out);
+        x = modules::AddModule().build(ctx, x, attn_out);
+
+        h = layer_norm.build(ctx, x, layer.mlp_norm);
+        auto ffn_out = mlp.build(ctx, h, layer.mlp);
+        x = modules::AddModule().build(ctx, x, ffn_out);
+    }
+
+    return layer_norm.build(ctx, x, encoder.final_norm);
 }
 
 }  // namespace
@@ -173,6 +262,88 @@ SmartTurnRuntime::SmartTurnRuntime(
 
 SmartTurnRuntime::~SmartTurnRuntime() = default;
 
+// The vendored real-FFT runs single-threaded per call, so a plain 800-frame
+// spectrogram costs ~3 ms of serial FFT. Split the frame range across worker
+// threads instead: worker k owns original frames [f0, f0+n_k) and receives the
+// exact sample segment that reproduces them, padded with 3 frames (480 samples)
+// of context so interior workers never touch the extractor's edge reflection.
+// Worker frame j' maps to original frame f0 + j' - c_k with c_k = 3 for context
+// workers and c_k = 0 for the first worker (whose segment starts at the signal
+// edge, where the extractor's reflection matches the true global reflection).
+std::vector<float> SmartTurnRuntime::compute_log_mel(const std::vector<float> & window) const {
+    const auto & cfg = weights_->config;
+    const int64_t total_frames = cfg.mel_frames;
+    const int64_t hop = cfg.hop_length;
+    const int64_t signal_samples = static_cast<int64_t>(window.size());
+
+    size_t hardware = resolve_feature_threads(*execution_context_);
+    int64_t workers = std::clamp<int64_t>(
+        hardware == 0 ? 1 : static_cast<int64_t>(hardware),
+        1,
+        6);
+    if (workers <= 1 || total_frames < workers * 64) {
+        auto features = extractor_.compute(window);
+        return std::move(features.values);
+    }
+
+    const int64_t per_worker = (total_frames + workers - 1) / workers;
+    std::vector<std::vector<float>> parts(static_cast<size_t>(workers));
+    std::vector<std::thread> threads;
+    int64_t used_workers = 0;
+    for (int64_t k = 0; k < workers; ++k) {
+        const int64_t f0 = k * per_worker;
+        if (f0 >= total_frames) {
+            break;
+        }
+        const int64_t n_k = std::min(per_worker, total_frames - f0);
+        const int64_t a_k = std::max<int64_t>(0, f0 * hop - 3 * hop);
+        const int64_t c_k = a_k == f0 * hop - 3 * hop ? 3 : 0;
+        const int64_t b_k = std::min(signal_samples, a_k + (c_k + n_k + 1) * hop);
+        threads.emplace_back([this, &parts, k, a_k, b_k, n_k, c_k]() {
+#ifdef _OPENMP
+            // Avoid oversubscription: the extractor's internal OpenMP regions
+            // get a slice of the cores instead of the full default team. Slight
+            // deliberate oversubscription (~1.5x) measured fastest: worker
+            // threads block on memory while inner regions compute.
+            const int64_t inner = std::max<int64_t>(
+                2,
+                (3 * static_cast<int64_t>(resolve_feature_threads(*execution_context_))) / (2 * workers));
+            omp_set_num_threads(static_cast<int>(inner));
+#endif
+            std::vector<float> segment(window.begin() + static_cast<ptrdiff_t>(a_k),
+                                       window.begin() + static_cast<ptrdiff_t>(b_k));
+            auto features = extractor_.compute(segment);
+            const int64_t produced = features.frames;
+            const int64_t first = c_k;
+            const int64_t keep = std::min<int64_t>(n_k, produced - first);
+            auto & out = parts[static_cast<size_t>(k)];
+            out.assign(static_cast<size_t>(keep * features.mel_bins), 0.0F);
+            for (int64_t frame = 0; frame < keep; ++frame) {
+                const auto src = static_cast<size_t>((first + frame) * features.mel_bins);
+                const auto dst = static_cast<size_t>(frame * features.mel_bins);
+                std::copy_n(features.values.begin() + static_cast<ptrdiff_t>(src),
+                            static_cast<size_t>(features.mel_bins),
+                            out.begin() + static_cast<ptrdiff_t>(dst));
+            }
+        });
+        ++used_workers;
+    }
+    for (auto & thread : threads) {
+        thread.join();
+    }
+
+    std::vector<float> features;
+    features.reserve(static_cast<size_t>(total_frames * cfg.n_mels));
+    for (int64_t k = 0; k < used_workers; ++k) {
+        const auto & part = parts[static_cast<size_t>(k)];
+        features.insert(features.end(), part.begin(), part.end());
+    }
+    if (static_cast<int64_t>(features.size()) != total_frames * cfg.n_mels) {
+        throw std::runtime_error("Smart Turn parallel log-mel produced an unexpected frame count");
+    }
+    return features;
+}
+
 std::vector<float> SmartTurnRuntime::extract_audio_features(const runtime::AudioBuffer & audio) const {
     const auto & cfg = weights_->config;
     if (audio.sample_rate <= 0) {
@@ -223,12 +394,12 @@ std::vector<float> SmartTurnRuntime::extract_audio_features(const runtime::Audio
         value = (value - static_cast<float>(mean)) / denom;
     }
 
-    auto features = extractor_.compute(window, resolve_feature_threads(*execution_context_));
-    if (features.mel_bins != cfg.n_mels || features.frames != cfg.mel_frames) {
+    auto features = compute_log_mel(window);
+    if (features.size() != static_cast<size_t>(cfg.n_mels * cfg.mel_frames)) {
         throw std::runtime_error("Smart Turn log-mel frontend returned an unexpected shape");
     }
     engine::debug::timing_log_scalar("smart_turn.frontend.audio_prepare_ms", engine::debug::elapsed_ms(prepare_start));
-    return std::move(features.values);
+    return features;
 }
 
 SmartTurnRuntime::InferenceGraph & SmartTurnRuntime::ensure_inference_graph() {
@@ -253,9 +424,9 @@ SmartTurnRuntime::InferenceGraph & SmartTurnRuntime::ensure_inference_graph() {
         core::TensorShape::from_dims({1, cfg.n_mels, cfg.mel_frames}));
 
     // Whisper-Tiny encoder (conv frontend, positional embeddings, transformer
-    // layers, final LayerNorm) fused with the head into a single graph.
-    auto x = modules::WhisperEmbeddingModule(encoder_config_)
-                 .build(build_ctx, input, backend_weights_->encoder);
+    // layers with flash attention, final LayerNorm) fused with the head into a
+    // single graph.
+    auto x = build_encoder_stack(build_ctx, cfg, encoder_config_, backend_weights_->encoder, input);
 
     // pool_attention: Linear -> Tanh -> Linear producing per-position logits.
     auto pool = modules::LinearModule({cfg.d_model, cfg.pool_dim, true})

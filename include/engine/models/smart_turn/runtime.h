@@ -47,6 +47,10 @@ public:
     // Log-mel features (n_mels * mel_frames) for the analyzed 8-second window.
     std::vector<float> extract_audio_features(const runtime::AudioBuffer & audio) const;
 
+    // Log-mel over an already normalized 8-second window; splits the frame range
+    // across worker threads (the vendored FFT is single-threaded per call).
+    std::vector<float> compute_log_mel(const std::vector<float> & window) const;
+
     // Runs the fused encoder + attention-pool + classifier graph on log-mel features.
     SmartTurnInferenceResult infer_features(const std::vector<float> & mel_features);
 
