@@ -3,7 +3,7 @@
 // against reference values produced by the official ONNX model with the
 // HuggingFace Whisper feature extractor (see models/smart-turn tooling).
 //
-// Usage: smart_turn_parity <model_dir> <fixtures_dir>
+// Usage: smart_turn_parity <model_dir> <fixtures_dir> [--backend cpu|vulkan|cuda]
 
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/io/filesystem.h"
@@ -64,11 +64,29 @@ int main(int argc, char ** argv) {
         engine::runtime::TaskSpec task;
         task.task = engine::runtime::VoiceTaskKind::Vad;
         task.mode = engine::runtime::RunMode::Offline;
-        auto session = model->create_task_session(task, engine::runtime::SessionOptions{});
+        engine::runtime::SessionOptions session_options;
+        for (int i = 3; i + 1 < argc; ++i) {
+            if (std::string(argv[i]) == "--backend") {
+                const std::string backend = argv[i + 1];
+                if (backend == "cpu") {
+                    session_options.backend.type = engine::core::BackendType::Cpu;
+                } else if (backend == "vulkan") {
+                    session_options.backend.type = engine::core::BackendType::Vulkan;
+                } else if (backend == "cuda") {
+                    session_options.backend.type = engine::core::BackendType::Cuda;
+                } else {
+                    throw std::runtime_error("unsupported parity backend: " + backend);
+                }
+            }
+        }
+        auto session = model->create_task_session(task, session_options);
 
         int failures = 0;
         float worst_diff = 0.0F;
-        constexpr float kProbabilityTolerance = 1.0e-4F;
+        // GPU backends reorder reductions and may lower intermediate precision,
+        // which costs ~1e-3 of probability noise; CPU matches to float32 rounding.
+        const bool is_gpu = session_options.backend.type != engine::core::BackendType::Cpu;
+        const float probability_tolerance = is_gpu ? 5.0e-3F : 1.0e-4F;
         for (const auto & expectation : expectations) {
             const auto wav = engine::audio::read_wav_f32(fixtures_dir / (expectation.name + ".wav"));
             engine::runtime::AudioBuffer audio;
@@ -102,7 +120,7 @@ int main(int argc, char ** argv) {
             const float diff = std::fabs(probability - expectation.probability);
             worst_diff = std::max(worst_diff, diff);
             const int prediction = probability > 0.5F ? 1 : 0;
-            const bool ok = diff < kProbabilityTolerance;
+            const bool ok = diff < probability_tolerance;
             if (!ok) {
                 ++failures;
             }

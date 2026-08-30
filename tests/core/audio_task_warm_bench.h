@@ -229,6 +229,7 @@ inline int run_audio_task_warm_bench(int argc, char ** argv, const AudioTaskBenc
     set_process_env("ENGINE_TRACE_ENABLED", "0");
     set_process_env("ENGINE_TIMING_ENABLED", "1");
     set_process_env("ENGINE_TIMING_FILE", timing_path.string());
+    engine::debug::configure_logging(engine::debug::LoggingConfig{true, timing_path.string()});
 
     auto registry = runtime::make_default_registry();
     runtime::ModelLoadRequest load_request;

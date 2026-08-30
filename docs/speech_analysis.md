@@ -139,6 +139,27 @@ This writes `smart_turn.safetensors` and `smart_turn_config.json`. The script in
 forward-pass self-check against onnxruntime (`--fixtures`). To also build the parity fixtures used
 by `tests/smart_turn/smart_turn_parity.cpp`, see `scripts/smart_turn/build_parity_fixtures.py`.
 
+### Performance
+
+Measured with `smart_turn_warm_bench` on an 8-second 16 kHz fixture (median of 10 runs,
+`ENGINE_TIMING_ENABLED` breakdown available through `--timing-file`). RTF = wall time / audio
+duration; lower is better. The model runs the fused encoder+head as a single ggml graph.
+
+| Backend | Threads | Wall (median) | RTF |
+|---|---:|---:|---:|
+| CPU (i5-10400, fp32) | 1 | 312 ms | 0.039 |
+| CPU | 6 | 65 ms | 0.008 |
+| CPU | 12 | 50 ms | 0.006 |
+| Vulkan (Radeon RX Vega, fp32) | 1 | 18.3 ms | 0.0023 |
+| Vulkan | 12 | 15.6 ms | 0.0019 |
+| Vulkan (`smart_turn.weight_type=f16`) | 12 | 15.4 ms | 0.0019 |
+
+On Vulkan the runtime splits into ~4.3 ms of CPU-side preprocessing (16 kHz conversion,
+zero-mean/unit-variance normalization, log-mel) and ~10.3 ms of GPU graph time. Quantized or
+f16 weights change probabilities by at most ~1e-3 and stay within the GPU parity tolerance
+(see `tests/smart_turn/smart_turn_parity.cpp`, which validates 100 real fixtures on both CPU
+and GPU backends).
+
 ## Sortformer Diarization
 
 Sortformer diarization identifies speaker turns. The packaged model path is the 4-speaker variant.
