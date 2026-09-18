@@ -561,6 +561,14 @@ NemotronDecodedText NemotronDecoderRuntime::decode_streaming(
     debug::timing_log_scalar("nemotron_asr.decoder_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));
     debug::trace_log_scalar("nemotron_asr.decoder.tokens", out.token_ids.size());
     debug::trace_log_scalar("nemotron_asr.decoder.encoded_valid_frames", encoded_valid_frames);
+    if (debug::trace_log_enabled()) {
+        std::string ids;
+        for (const int32_t id : out.token_ids) {
+            ids += std::to_string(id);
+            ids.push_back(',');
+        }
+        debug::trace_log_scalar("nemotron_asr.decoder.token_ids", ids);
+    }
     return out;
 }
 
