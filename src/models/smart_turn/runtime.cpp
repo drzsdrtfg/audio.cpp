@@ -299,7 +299,7 @@ std::vector<float> SmartTurnRuntime::compute_log_mel(const std::vector<float> & 
         const int64_t a_k = std::max<int64_t>(0, f0 * hop - 3 * hop);
         const int64_t c_k = a_k == f0 * hop - 3 * hop ? 3 : 0;
         const int64_t b_k = std::min(signal_samples, a_k + (c_k + n_k + 1) * hop);
-        threads.emplace_back([this, &parts, k, a_k, b_k, n_k, c_k]() {
+        threads.emplace_back([this, &parts, &window, workers, k, a_k, b_k, n_k, c_k]() {
 #ifdef _OPENMP
             // Avoid oversubscription: the extractor's internal OpenMP regions
             // get a slice of the cores instead of the full default team. Slight
