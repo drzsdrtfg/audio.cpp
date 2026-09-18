@@ -42,10 +42,15 @@ const specsByFamily = new Map(Object.values(specModules).map((spec) => [spec.fam
 const exposeAllGgufPackageFamilies = new Set([
   'audiosr',
   'controlfoley',
+  'breeze_tts',
+  'cosyvoice3',
   'firered_audio',
   'fireredtts3',
+  'irodori_tts',
+  'kokoro_tts',
   'meanvc2',
-  'midashenglm_gen'
+  'midashenglm_gen',
+  'sanotts'
 ]);
 
 const hanCharacters = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/u;
@@ -116,6 +121,7 @@ function relatedExposeAllGgufPackages(entry: CatalogEntry): PackageEntry[] {
   const family = packages.filter((candidate) =>
     candidate.family === entry.family && candidate.format === 'gguf');
   if (!family.length) return [];
+  if (entry.family === 'sanotts') return family;
   if (!entry.download_id) return family;
   const exact = family.find((candidate) => candidate.id === entry.download_id);
   if (!exact) return relatedPackages(entry);
@@ -134,6 +140,15 @@ function exposedPackageRank(entry: PackageEntry, selectedId?: string): number {
 }
 
 function packageLabel(entry: PackageEntry): string {
+  if (entry.family === 'sanotts') {
+    if (entry.id.includes('_heart_nano_')) return 'Heart Nano';
+    if (entry.id.includes('_heart_')) return 'Heart';
+    if (entry.id.includes('_amy_')) return 'Amy';
+    if (entry.id.includes('_hfc_')) return 'HFC';
+    if (entry.id.includes('_kristin_')) return 'Kristin';
+    if (entry.id.includes('_vi_')) return 'Vietnamese';
+    if (entry.id.includes('_id_')) return 'Indonesian';
+  }
   if (entry.family === 'ace_step') {
     const precision = entry.precision === 'bf16'
       ? 'BF16'
@@ -144,6 +159,15 @@ function packageLabel(entry: PackageEntry): string {
     if (entry.id.includes('_xl_sft_')) return `GGUF Turbo XL SFT ${precision}`;
     if (entry.id.includes('_turbo_')) return `GGUF Turbo ${precision}`;
     return `GGUF ${precision}`;
+  }
+  if (entry.family === 'irodori_tts' && entry.id.includes('_anime_')) return 'Anime Q8';
+  if (entry.family === 'yue2') {
+    if (entry.id === 'yue2_main_q8_0') return 'Main Q8_0';
+    if (entry.id === 'yue2_main_q4_0') return 'Main Q4_0';
+    if (entry.id === 'yue2_main_bf16') return 'Main BF16';
+    if (entry.id === 'yue2_vae_f16') return 'VAE F16';
+    if (entry.id === 'yue2_vae_f32') return 'VAE F32';
+    return entry.display_name || 'Yue2 component';
   }
   if (entry.format === 'safetensors') return 'Safetensors';
   if (entry.id.includes('int8_dit')) return 'GGUF Q4 ConvRot';
@@ -159,7 +183,7 @@ function packageModelPath(entry: PackageEntry): string {
   if (entry.format === 'gguf' && entry.family === 'minimax_h3') {
     const entryName = entry.id.includes('int8_dit') ? 'dit_int8.gguf' : 'dit.gguf';
     modelFile = entry.files?.find((file) => file.toLowerCase().endsWith(`/${entryName}`));
-  } else if (entry.format === 'gguf' && entry.family === 'minimax_music3') {
+  } else if (entry.format === 'gguf' && (entry.family === 'minimax_music3' || entry.family === 'yue2')) {
     return `models/${entry.target_directory}`;
   } else if (entry.format === 'gguf') {
     modelFile = entry.files?.find((file) => file.toLowerCase().endsWith('.gguf'));
@@ -174,33 +198,56 @@ function packageModelPath(entry: PackageEntry): string {
 }
 
 function packageSessionOptions(entry: PackageEntry): Record<string, string> | undefined {
-  if (entry.family !== 'minimax_music3') return undefined;
-  if (entry.id === 'minimax_music3_q8_0') {
-    return {
-      'minimax_music3.language_model_gguf': 'language_model_q8_0.gguf',
-      'minimax_music3.rvq_depth_decoder_gguf': 'rvq_depth_decoder_q8_0.gguf',
-      'minimax_music3.flow_transformer_gguf': 'transformer_q8_0.gguf'
-    };
-  }
-  if (entry.id === 'minimax_music3_bf16') {
-    return {
-      'minimax_music3.language_model_gguf': 'language_model_bf16.gguf',
-      'minimax_music3.rvq_depth_decoder_gguf': 'rvq_depth_decoder_bf16.gguf',
-      'minimax_music3.flow_transformer_gguf': 'transformer_bf16.gguf'
-    };
-  }
-  if (entry.id === 'minimax_music3_q4_0') {
-    return {
-      'minimax_music3.language_model_gguf': 'language_model_q4_0.gguf',
-      'minimax_music3.rvq_depth_decoder_gguf': 'rvq_depth_decoder_q8_0.gguf',
-      'minimax_music3.flow_transformer_gguf': 'transformer_q4_0.gguf'
-    };
+  if (entry.family === 'minimax_music3') {
+    if (entry.id === 'minimax_music3_q8_0') {
+      return {
+        'minimax_music3.language_model_gguf': 'language_model_q8_0.gguf',
+        'minimax_music3.rvq_depth_decoder_gguf': 'rvq_depth_decoder_q8_0.gguf',
+        'minimax_music3.flow_transformer_gguf': 'transformer_q8_0.gguf'
+      };
+    }
+    if (entry.id === 'minimax_music3_bf16') {
+      return {
+        'minimax_music3.language_model_gguf': 'language_model_bf16.gguf',
+        'minimax_music3.rvq_depth_decoder_gguf': 'rvq_depth_decoder_bf16.gguf',
+        'minimax_music3.flow_transformer_gguf': 'transformer_bf16.gguf'
+      };
+    }
+    if (entry.id === 'minimax_music3_q4_0') {
+      return {
+        'minimax_music3.language_model_gguf': 'language_model_q4_0.gguf',
+        'minimax_music3.rvq_depth_decoder_gguf': 'rvq_depth_decoder_q8_0.gguf',
+        'minimax_music3.flow_transformer_gguf': 'transformer_q4_0.gguf'
+      };
+    }
   }
   return undefined;
 }
 
 function installChoices(entry: CatalogEntry): InstallPackageChoice[] {
   const exposesAllGguf = exposeAllGgufPackageFamilies.has(entry.family);
+  if (entry.family === 'yue2') {
+    const related = packages.filter((candidate) =>
+      candidate.family === entry.family && candidate.format === 'gguf');
+    const order = new Map([
+      ['yue2_main_q8_0', 0],
+      ['yue2_main_q4_0', 1],
+      ['yue2_main_bf16', 2],
+      ['yue2_vae_f16', 3],
+      ['yue2_vae_f32', 4]
+    ]);
+    return related
+      .filter((candidate) => candidate.format === 'gguf')
+      .sort((left, right) => (order.get(left.id) ?? 99) - (order.get(right.id) ?? 99))
+      .map((candidate) => ({
+        id: candidate.id,
+        label: packageLabel(candidate),
+        path: packageModelPath(candidate),
+        format: candidate.format,
+        precision: candidate.precision,
+        session_options: packageSessionOptions(candidate)
+      }));
+  }
   const related = exposesAllGguf ? relatedExposeAllGgufPackages(entry) : relatedPackages(entry);
   if (entry.family === 'ace_step' || entry.family === 'minimax_music3' ||
       exposesAllGguf) {

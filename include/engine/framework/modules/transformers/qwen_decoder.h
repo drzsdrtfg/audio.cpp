@@ -53,6 +53,10 @@ enum class QwenDecoderPositionEncoding {
 struct QwenDecoderActivationCastPolicy {
     bool enabled = false;
     ggml_type type = GGML_TYPE_BF16;
+    // Use the fused single-kernel round-to-bf16 op instead of a
+    // cast -> bf16 -> cast -> f32 round trip. Only valid on backends that
+    // implement GGML_UNARY_OP_ROUND_BF16 (CUDA/HIP, CPU fallback).
+    bool fused_round = false;
     bool after_input_norm = false;
     bool after_qkv_projection = false;
     bool after_qk_norm = false;
@@ -73,6 +77,9 @@ struct QwenDecoderAttentionPolicy {
     QwenDecoderAttentionMode static_mode = QwenDecoderAttentionMode::FlashGrouped;
     QwenDecoderPrefixAttentionMode prefix_mode = QwenDecoderPrefixAttentionMode::Exact;
     int64_t grouped_query_min_steps = 0;
+    // False routes flash branches through repeat-KV + matmul/softmax for GPUs
+    // without a flash kernel (e.g. CUDA sm70). True preserves historical behavior.
+    bool allow_flash_attention = true;
 };
 
 struct QwenDecoderStaticCachePolicy {
@@ -160,6 +167,17 @@ public:
         const std::optional<core::TensorValue> & cache_slot,
         const core::TensorValue & attention_mask) const;
 
+    QwenDecoderLayerOutputs build_with_static_cache_block(
+        core::ModuleBuildContext & ctx,
+        ggml_cgraph * graph,
+        const core::TensorValue & input,
+        const core::TensorValue & positions,
+        const QwenDecoderLayerWeights & weights,
+        const core::TensorValue & cache_key,
+        const core::TensorValue & cache_value,
+        const std::optional<core::TensorValue> & cache_slot,
+        const core::TensorValue & attention_mask) const;
+
     QwenDecoderLayerOutputs build_with_static_cache_tail_batched(
         core::ModuleBuildContext & ctx,
         ggml_cgraph * graph,
@@ -174,6 +192,17 @@ public:
     static const core::ModuleSchema & static_schema() noexcept;
 
 private:
+    QwenDecoderLayerOutputs build_static_cache_impl(
+        core::ModuleBuildContext & ctx,
+        ggml_cgraph * graph,
+        const core::TensorValue & input,
+        const core::TensorValue & positions,
+        const QwenDecoderLayerWeights & weights,
+        const core::TensorValue & cache_key,
+        const core::TensorValue & cache_value,
+        const std::optional<core::TensorValue> & cache_slot,
+        const core::TensorValue & attention_mask,
+        bool block) const;
     QwenDecoderLayerConfig config_;
 };
 

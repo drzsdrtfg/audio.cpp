@@ -1107,6 +1107,120 @@
       ]
     },
     {
+      "id": "yue2_direct_off_medium",
+      "coverage": "YuE2 direct text-to-music route without ABC planning",
+      "family": "yue2",
+      "model": "models/YuE2-3B-Q8_0-GGUF",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "direct_off_medium",
+          "text": "[Verse]\nAudio dot cpp starts the demo tonight.\nSmall sparks of music glow in the light.\nA local engine keeps the rhythm tight.\nNo cloud in the loop, just code taking flight.\n[Pre-Chorus]\nEvery buffer finds its place.\nEvery model joins the race.\n[Chorus]\nTurn the signal into song.\nLet the native runtime carry it along.\nFrom text to melody, clear and strong.\nAudio dot cpp keeps the demo moving on.",
+          "seed": 20260910,
+          "num_inference_steps": 8,
+          "options": {
+            "cfg_scale": 1.01,
+            "style": "English, indie pop, bright acoustic guitar, soft drums, warm lead vocal, polished demo mix",
+            "cot": "off",
+            "abc_min_tokens": 0,
+            "abc_max_tokens": 1,
+            "semantic_min_tokens": 192,
+            "semantic_max_tokens": 640
+          }
+        }
+      ]
+    },
+    {
+      "id": "yue2_create_full_plan_medium",
+      "coverage": "YuE2 full ABC planning route",
+      "family": "yue2",
+      "model": "models/YuE2-3B-Q8_0-GGUF",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "create_full_plan_medium",
+          "text": "[Verse]\nA quiet room begins to sing.\nThe keys reply with silver rings.\nA metronome is counting time.\nA simple phrase becomes a line.\n[Pre-Chorus]\nThe bass walks in with patient grace.\nThe melody opens more space.\n[Chorus]\nHold the note and let it rise.\nMorning opens up the sky.\nEvery word can find a place.\nEvery phrase can leave a trace.\n[Bridge]\nIf the plan is clear and bright.\nThe song can travel through the night.",
+          "seed": 20260911,
+          "num_inference_steps": 8,
+          "options": {
+            "cfg_scale": 1.0,
+            "style": "English, piano pop, clear lead vocal, gentle bass, 92 BPM, warm chorus harmonies, soft room reverb",
+            "cot": "full",
+            "abc_min_tokens": 128,
+            "abc_max_tokens": 512,
+            "semantic_min_tokens": 224,
+            "semantic_max_tokens": 768
+          }
+        }
+      ]
+    },
+    {
+      "id": "yue2_cover_melody_score_medium",
+      "coverage": "YuE2 melody score conditioning route with external ABC",
+      "family": "yue2",
+      "model": "models/YuE2-3B-Q8_0-GGUF",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "cover_melody_score_medium",
+          "text": "[Verse]\nWe follow the melody line.\nThe rhythm keeps everything fine.\nA Rhodes chord lands behind the beat.\nThe bass keeps walking down the street.\n[Chorus]\nHold that shape and make it new.\nChange the color, keep the view.\nEvery phrase can still belong.\nWhen the cover turns into a song.",
+          "seed": 20260912,
+          "num_inference_steps": 8,
+          "options": {
+            "cfg_scale": 1.0,
+            "style": "English, jazz funk cover, warm Rhodes, round bass, light drums, relaxed vocal, clean live band feel",
+            "cot": "melody",
+            "abc_file": "reference/YuE/examples/melody.abc",
+            "abc_min_tokens": 0,
+            "abc_max_tokens": 1,
+            "semantic_min_tokens": 192,
+            "semantic_max_tokens": 640
+          }
+        }
+      ]
+    },
+    {
+      "id": "yue2_edit_full_score_medium",
+      "coverage": "YuE2 full score edit route with external ABC",
+      "family": "yue2",
+      "model": "models/YuE2-3B-Q8_0-GGUF",
+      "task": "gen",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "edit_full_score_medium",
+          "text": "[Verse]\nA quiet room begins to sing.\nThe keys reply with silver rings.\nA brushed snare paints the second line.\nThe harmony turns right on time.\n[Chorus]\nHold the note and let it rise.\nMorning opens up the sky.\nKeep the score but change the light.\nMake the ending open wide.\n[Outro]\nLet the last chord slowly fade.\nLeave the echo we have made.",
+          "seed": 20260913,
+          "num_inference_steps": 8,
+          "options": {
+            "cfg_scale": 1.0,
+            "style": "English, piano pop with jazz harmony, clear lead vocal, gentle bass, 92 BPM, wider chorus, tasteful drum fills",
+            "cot": "full",
+            "abc_file": "reference/YuE/examples/score-jazz.abc",
+            "abc_min_tokens": 0,
+            "abc_max_tokens": 1,
+            "semantic_min_tokens": 192,
+            "semantic_max_tokens": 640
+          }
+        }
+      ]
+    },
+    {
       "id": "irodori_tts_500m_emoji_style_clone",
       "coverage": "Irodori-TTS 500M no-reference emoji/style requests and reference clone path in one session",
       "family": "irodori_tts",
@@ -2470,6 +2584,33 @@
       ]
     },
     {
+      "id": "niagara_asr_paths",
+      "coverage": "Niagara ASR offline CPU CTC decode on short and longer Librispeech inputs with session reuse",
+      "family": "niagara_asr",
+      "model": "models/Niagara-ASR-GGUF/niagara-19m-batch.en-f32.gguf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": [
+        "text"
+      ],
+      "requests": [
+        {
+          "id": "librispeech_clean_short",
+          "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav",
+          "options": {
+            "audio_chunk_mode": "none"
+          }
+        },
+        {
+          "id": "librispeech_clean_long",
+          "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav",
+          "options": {
+            "audio_chunk_mode": "none"
+          }
+        }
+      ]
+    },
+    {
       "id": "higgs_audio_stt_paths",
       "coverage": "Higgs Audio STT default prompt, custom prompt, enable_thinking on/off, max-token variation, and session reuse paths",
       "family": "higgs_audio_stt",
@@ -3586,6 +3727,132 @@
             "audio_chunk_overlap_sec": 0.0,
             "seed": 42
           }
+        }
+      ]
+    },
+    {
+      "id": "cosyvoice3_official_paths",
+      "coverage": "CosyVoice3 official zero-shot, cross-lingual, instruction, and hotfix-pronunciation paths after a short same-session warmup",
+      "family": "cosyvoice3",
+      "model": "models/audio.cpp-gguf/CosyVoice3-GGUF/cosyvoice3-q8_0.gguf",
+      "task": "clon",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "warmup_short_random",
+          "text": "你好。",
+          "reference_text": "You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。",
+          "voice_ref": "reference/CosyVoice/asset/zero_shot_prompt.wav",
+          "options": {
+            "template_name": "zero_shot",
+            "max_tokens": 80
+          },
+          "seed": 20260828
+        },
+        {
+          "id": "zero_shot_zh_official",
+          "text": "八百标兵奔北坡，北坡炮兵并排跑，炮兵怕把标兵碰，标兵怕碰炮兵炮。",
+          "reference_text": "You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。",
+          "voice_ref": "reference/CosyVoice/asset/zero_shot_prompt.wav",
+          "options": {
+            "template_name": "zero_shot"
+          },
+          "seed": 1986
+        },
+        {
+          "id": "fine_grained_control_official",
+          "text": "You are a helpful assistant.<|endofprompt|>[breath]因为他们那一辈人[breath]在乡里面住的要习惯一点，[breath]邻居都很活络，[breath]嗯，都很熟悉。[breath]",
+          "voice_ref": "reference/CosyVoice/asset/zero_shot_prompt.wav",
+          "options": {
+            "template_name": "cross_lingual"
+          },
+          "seed": 1986
+        },
+        {
+          "id": "instruct_cantonese_official",
+          "text": "好少咯，一般系放嗰啲国庆啊，中秋嗰啲可能会咯。",
+          "voice_ref": "reference/CosyVoice/asset/zero_shot_prompt.wav",
+          "options": {
+            "template_name": "instruct",
+            "instruction": "You are a helpful assistant. 请用广东话表达。<|endofprompt|>"
+          },
+          "seed": 1986
+        },
+        {
+          "id": "hotfix_pronunciation_official",
+          "text": "高管也通过电话、短信、微信等方式对报道[j][ǐ]予好评。",
+          "reference_text": "You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。",
+          "voice_ref": "reference/CosyVoice/asset/zero_shot_prompt.wav",
+          "options": {
+            "template_name": "zero_shot"
+          },
+          "seed": 1986
+        }
+      ]
+    },
+    {
+      "id": "breeze_tts_clone_official_paths",
+      "coverage": "BreezeTTS 2 official voice clone and voice direction paths using prompt audio, prompt transcript, T5Gemma text conditioning, Qwen acoustic generation, depth codebook decoding, and Mimi decode",
+      "family": "breeze_tts",
+      "model": "models/audio.cpp-gguf/Breeze-TTS-2-GGUF/breeze-tts-2-bf16.gguf",
+      "task": "clon",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "voice_clone_en_official",
+          "text": "(sigh) It is good to hear your voice again after all this time.",
+          "reference_text": "Some call me nature. Others call me Mother Nature. I have been here for over four and a half billion years. Twenty two thousand five hundred times longer than you.",
+          "voice_ref": "assets/resources/b.wav",
+          "guidance_scale": 1.0,
+          "seed": 42
+        },
+        {
+          "id": "voice_direction_en_official",
+          "text": "(clears throat) We need to discuss what happened last night.",
+          "reference_text": "Some call me nature. Others call me Mother Nature. I have been here for over four and a half billion years. Twenty two thousand five hundred times longer than you.",
+          "voice_ref": "assets/resources/b.wav",
+          "options": {
+            "instruction": "Speak slowly with a restrained, serious tone."
+          },
+          "guidance_scale": 4.0,
+          "seed": 45
+        }
+      ]
+    },
+    {
+      "id": "breeze_tts_design_official_paths",
+      "coverage": "BreezeTTS 2 official English and Chinese voice design paths using instruction conditioning, T5Gemma text conditioning, Qwen acoustic generation, depth codebook decoding, and Mimi decode",
+      "family": "breeze_tts",
+      "model": "models/audio.cpp-gguf/Breeze-TTS-2-GGUF/breeze-tts-2-bf16.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "voice_design_en_official",
+          "text": "(sigh) Welcome aboard. Your journey begins now.",
+          "options": {
+            "instruction": "A warm, thoughtful young woman with a clear voice and a calm, reflective delivery."
+          },
+          "guidance_scale": 4.0,
+          "seed": 43
+        },
+        {
+          "id": "voice_design_zh_official",
+          "text": "[笑] 欢迎来到今晚的故事时间，让我们一起开始吧。",
+          "options": {
+            "instruction": "一位温柔自信的年轻女性，声音清晰，语气亲切，表达轻快而富有感染力。"
+          },
+          "guidance_scale": 4.0,
+          "seed": 44
         }
       ]
     }

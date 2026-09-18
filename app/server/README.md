@@ -23,9 +23,35 @@ Pick the mode that matches the behavior you want:
 | Standalone deployed binary without local `model_specs/` | `-DAUDIOCPP_DEPLOYMENT_BUILD=ON` | `audiocpp_server --config server.json` | Binary carries compiled package specs for fallback model-spec lookup. |
 | Offline/reproducible native-manager build | `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON -DAUDIOCPP_BORINGSSL_ARCHIVE=/path/to/boringssl.tar.gz` | `audiocpp_server --ui --ui-management --backend <backend>` | Configure does not fetch BoringSSL from the network. |
 | Distro-packaged TLS instead of bundled BoringSSL | `-DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON -DAUDIOCPP_USE_SYSTEM_OPENSSL=ON` | `audiocpp_server --ui --ui-management --backend <backend>` | Uses system OpenSSL; useful for packagers. |
+| Optional in-process frontend pipeline | `-DAUDIOCPP_BUILD_SERVER_FRONTENDS=ON -DAUDIOCPP_SERVER_FRONTENDS_DIR=external/audio.cpp-server-frontends -DAUDIOCPP_SERVER_FRONTEND_MODULES="audio_decode;mp3_encode"` | `audiocpp_server --config server.json` | Adds compiled-in pre/post processing modules around the stable core API. The external frontend package owns modules and private dependencies such as miniaudio and libmp3lame. The default server build includes none of these modules or dependencies. |
+| Optional frontend listener | `-DAUDIOCPP_BUILD_SERVER_FRONTENDS=ON -DAUDIOCPP_SERVER_FRONTENDS_DIR=external/audio.cpp-server-frontends -DAUDIOCPP_SERVER_FRONTEND_MODULES=<listener>` | `audiocpp_server --config server.json --frontend-listener <listener> --frontend-option key=value` | Runs a selected frontend-owned transport listener, such as HTTPS or WebSocket, over the same in-process server handler. Listener code and private dependencies live in the external frontend package. |
 
 Native model management uses bundled BoringSSL by default. Normal server builds
 do not build or link that HTTP/TLS dependency.
+
+Optional frontend modules are selected at configure time with the semicolon-separated
+`AUDIOCPP_SERVER_FRONTEND_MODULES` list and an external
+`AUDIOCPP_SERVER_FRONTENDS_DIR` package. If you use the bundled submodule path,
+fetch it before configuring:
+
+```bash
+git submodule update --init external/audio.cpp-server-frontends
+```
+
+For a fresh clone, `git clone --recurse-submodules` also fetches it.
+
+The server runs selected modules as an ordered pipeline: every module gets a
+pre-processing pass before the core handler, then every module gets a
+post-processing pass after the core handler. A module that does not need one side
+leaves that method empty. Each active side declares a simple contract over the
+HTTP envelope state (`method`, `path`, `request_in/request_out` for
+pre-processing, or `response_in/response_out` for post-processing), and module
+registration rejects incompatible adjacent transforms on the same route.
+
+Listener frontends are selected through the same external package but are not
+part of the pre/post pipeline. The server core only knows a listener name plus
+string options; the external package owns listener implementations, docs, and
+dependency detection.
 
 ## Config
 
@@ -104,6 +130,11 @@ Set top-level `"min_free_memory_mb"` to refuse a model load when the host or the
 Set per-model `"default_request_options"` to apply request-option defaults to every request for that model. Values supplied by the actual request body override these defaults.
 
 Set top-level `"max_request_body_bytes"` to bound the largest HTTP request body buffered in host RAM before routing. This protects endpoints that accept JSON or audio uploads from unbounded `Content-Length` claims. The default is `2147483648` bytes (2 GiB). Raise or lower it to match the largest upload your deployment intends to accept. Values above `2^53 - 1` are rejected because this config parser stores JSON numbers as doubles.
+
+Set top-level `"frontend_listener"` to use an optional frontend transport
+listener compiled from the external frontend package. Listener-specific string
+settings go under `"frontend_options"`. The equivalent command-line options are
+`--frontend-listener <name>` and repeated `--frontend-option key=value`.
 
 Set top-level `"log_request_body": true` and start the server with `--log` to print full JSON request bodies for debugging. This is off by default, and both switches are required so prompt text, paths, and request options are not logged accidentally. Audio bodies are not printed; multipart uploads log filename and byte count, while raw or live/chunked audio requests log only route, content type, query, and size/stream metadata.
 
@@ -319,7 +350,7 @@ curl http://127.0.0.1:8080/v1/audio/speech \
   }'
 ```
 
-Set `"response_format": "json"` to receive base64 WAV in a JSON response.
+Set `"response_format": "json"` to receive base64 WAV in a JSON response. In builds configured with `-DAUDIOCPP_BUILD_SERVER_FRONTENDS=ON -DAUDIOCPP_SERVER_FRONTENDS_DIR=external/audio.cpp-server-frontends -DAUDIOCPP_SERVER_FRONTEND_MODULES=mp3_encode`, `"response_format": "mp3"` returns `audio/mpeg` MP3 bytes for non-streaming speech requests.
 
 For streaming-capable TTS models configured with `mode: "streaming"`, `stream_format` follows the OpenAI speech streaming shape:
 
@@ -344,7 +375,7 @@ The SSE stream emits `speech.audio.delta` events with base64 PCM chunks, then `s
 
 ### `POST /v1/audio/transcriptions`
 
-JSON transcription request using a server-local audio path.
+JSON transcription request using a server-local WAV audio path.
 
 ```bash
 curl http://127.0.0.1:8080/v1/audio/transcriptions \
@@ -364,7 +395,7 @@ curl http://127.0.0.1:8080/v1/audio/transcriptions \
   -F file=@/path/to/input.wav
 ```
 
-`file` and `model` are required; `language` is optional. Uploaded WAV bytes are decoded in memory and are not written to a temporary file.
+`file` and `model` are required; `language` is optional. Uploaded WAV bytes are decoded in memory and are not written to a temporary file. In builds configured with `-DAUDIOCPP_BUILD_SERVER_FRONTENDS=ON -DAUDIOCPP_SERVER_FRONTENDS_DIR=external/audio.cpp-server-frontends -DAUDIOCPP_SERVER_FRONTEND_MODULES=audio_decode`, the frontend also accepts MP3 and FLAC input for this route, decodes it to a temporary WAV, and forwards that normalized request to the same core transcription handler.
 
 For streaming-capable ASR models configured with `mode: "streaming"`, pass `stream=true` to receive OpenAI-style transcription SSE:
 
@@ -379,6 +410,58 @@ curl -N http://127.0.0.1:8080/v1/audio/transcriptions \
 The stream emits `transcript.text.delta` events, one final `transcript.text.done` event containing the full transcript, then `data: [DONE]`.
 
 Note that `stream=true` streams the *output* of an already-uploaded file: the whole recording is sent first, and the deltas describe decoding it. It shortens time-to-first-token on long audio, but nothing can appear while the speaker is still talking. For that, use the live endpoint below.
+
+### `POST /v1/audio/transcriptions/details`
+
+Same request as `POST /v1/audio/transcriptions` — JSON with a server-local path, or a `multipart/form-data` upload — with a richer response. Use it when the model produces timestamps or speaker labels and the caller wants them.
+
+`/v1/audio/transcriptions` returns `text` and `timing` and nothing else, so a model that aligned every word or separated speakers has that work discarded on the way out. This route returns those fields instead. The response schema of the plain route is unchanged; existing clients see exactly what they see today.
+
+```bash
+curl http://127.0.0.1:8080/v1/audio/transcriptions/details \
+  -F model=parakeet-tdt \
+  -F file=@/path/to/input.wav
+```
+
+```json
+{
+  "text": "the task has completed successfully",
+  "language": "en",
+  "words": [
+    {"word": "the", "start_sample": 3200, "end_sample": 6400, "confidence": 0.98}
+  ],
+  "sample_rate": 16000,
+  "timing": { "wall_ms": 412.7, "audio_duration_ms": 2400.0, "rtf": 0.17 }
+}
+```
+
+`text` and `timing` are always present and match the plain route. The rest appear only when the model produced them:
+
+| Field | Present when | Contents |
+|---|---|---|
+| `language` | the model reports a detected or configured language | Language code. |
+| `segments` | the model produces speech segments | `start_sample`, `end_sample`, `confidence`, and `text` where the segment carries it. |
+| `speaker_turns` | the model diarizes | `start_sample`, `end_sample`, `speaker_id`, `confidence`, and `text` where present. |
+| `words` | the model aligns words | `word`, `start_sample`, `end_sample`, `confidence`. |
+| `sample_rate` | any of the three arrays above is present | Rate the sample offsets are counted in. Divide an offset by it for seconds. |
+
+Spans are sample offsets rather than seconds because that is what the models report; `sample_rate` is what converts them, which is why it only appears alongside them.
+
+`stream=true` is rejected with a 400 on this route: the SSE response carries transcript deltas only, so it has nowhere to put the detail arrays. Use `/v1/audio/transcriptions` for a streamed transcript.
+
+### `POST /v1/audio/alignments`
+
+Multipart forced-alignment request using uploaded audio bytes and a known transcript. Use this when the server cannot see the client's local audio path, for example when the server is remote or running in Docker.
+
+```bash
+curl http://127.0.0.1:8080/v1/audio/alignments \
+  -F model=qwen3-align \
+  -F language=en \
+  -F text='The task has completed successfully.' \
+  -F file=@/path/to/input.wav
+```
+
+`file`, `model`, and `text` are required; `language` is optional. The selected model must be configured with `task: "align"` and `mode: "offline"`. Uploaded WAV bytes are decoded in memory and are not written to a temporary file. The response includes word timestamps in seconds plus sample offsets.
 
 ### `POST /v1/audio/transcriptions/live`
 

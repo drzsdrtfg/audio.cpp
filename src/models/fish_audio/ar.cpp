@@ -11,6 +11,11 @@
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/sampling/torch_random.h"
 
+#ifdef ENGINE_HAS_HIP_FISH_FAST_SAMPLER
+#include "hip_fast_sampler.h"
+#include <ggml-cuda.h>
+#endif
+
 #include "engine/framework/core/constant_tensor_cache.h"
 
 #include <ggml-alloc.h>
@@ -534,14 +539,10 @@ SampleDistribution logits_to_distribution(
     return {logits.size(), std::move(kept)};
 }
 
-int32_t sample_from_logits(
-    const std::vector<float> & logits,
-    float temperature,
-    float top_p,
-    int top_k,
+int32_t sample_from_distribution(
+    const SampleDistribution & distribution,
     SampleState & state,
     const sampling::TorchCudaSamplingPolicy & policy) {
-    const auto distribution = logits_to_distribution(logits, temperature, top_p, top_k);
     const uint64_t call_index = state.call_index++;
     if (!policy.cuda_fast_path) {
         std::vector<double> weights;
@@ -576,6 +577,65 @@ int32_t sample_from_logits(
     }
     return best;
 }
+
+int32_t sample_from_logits(
+    const std::vector<float> & logits,
+    float temperature,
+    float top_p,
+    int top_k,
+    SampleState & state,
+    const sampling::TorchCudaSamplingPolicy & policy) {
+    const auto distribution = logits_to_distribution(logits, temperature, top_p, top_k);
+    return sample_from_distribution(distribution, state, policy);
+}
+
+#ifdef ENGINE_HAS_HIP_FISH_FAST_SAMPLER
+int32_t sample_from_hip_topk(
+    const detail::HipFastTopKResult & result,
+    size_t source_size,
+    float temperature,
+    float top_p,
+    SampleState & state,
+    const sampling::TorchCudaSamplingPolicy & policy) {
+    if (result.count <= 0 || !(result.denom > 0.0)) {
+        throw std::runtime_error("HIP Fish fast sampler produced an invalid distribution");
+    }
+
+    double cumulative = 0.0;
+    int32_t kept_count = 0;
+    for (int32_t i = 0; i < result.count; ++i) {
+        const float probability = static_cast<float>(std::exp(result.logits[i] - result.max_logit) / result.denom);
+        cumulative += probability;
+        if (cumulative > static_cast<double>(top_p) && i != 0) {
+            break;
+        }
+        ++kept_count;
+    }
+
+    const float temperature_scale = std::max(temperature, 1.0e-5F);
+    float filtered_max = -std::numeric_limits<float>::infinity();
+    for (int32_t i = 0; i < kept_count; ++i) {
+        filtered_max = std::max(filtered_max, result.logits[i] / temperature_scale);
+    }
+    std::vector<SampleCandidate> candidates;
+    candidates.reserve(static_cast<size_t>(kept_count));
+    double filtered_denom = 0.0;
+    for (int32_t i = 0; i < kept_count; ++i) {
+        const float weight = std::exp(result.logits[i] / temperature_scale - filtered_max);
+        candidates.push_back({result.indices[i], weight});
+        filtered_denom += weight;
+    }
+    if (!(filtered_denom > 0.0)) {
+        throw std::runtime_error("HIP Fish fast sampler produced zero filtered probability mass");
+    }
+    for (auto & candidate : candidates) {
+        candidate.probability = static_cast<float>(static_cast<double>(candidate.probability) / filtered_denom);
+    }
+
+    const SampleDistribution distribution{source_size, std::move(candidates)};
+    return sample_from_distribution(distribution, state, policy);
+}
+#endif
 
 std::vector<float> apply_semantic_bias(
     const FishAudioConfig & config,
@@ -1325,15 +1385,77 @@ private:
                 throw std::runtime_error("failed to allocate Fish Audio fast AR graph");
             }
             mask_scratch_.assign(static_cast<size_t>(config.num_codebooks), ggml_fp32_to_fp16(-INFINITY));
+#ifdef ENGINE_HAS_HIP_FISH_FAST_SAMPLER
+            if (runtime_->backend_type() == core::BackendType::Hip) {
+                hip_sampler_ = detail::hip_fast_sampler_create(static_cast<int32_t>(config.vocab_size));
+                std::vector<float> embedding_table(static_cast<size_t>(config.vocab_size * config.dim));
+                for (int64_t row = 0; row < config.vocab_size; ++row) {
+                    copy_tensor_row_to_f32(
+                        weights.fast_embedding_host,
+                        row,
+                        config.dim,
+                        embedding_table.data() + static_cast<size_t>(row * config.dim));
+                }
+                detail::hip_fast_sampler_upload_embeddings(
+                    hip_sampler_,
+                    embedding_table.data(),
+                    static_cast<int32_t>(config.vocab_size),
+                    static_cast<int32_t>(config.dim));
+            }
+#endif
         }
 
         ~FastGraph() {
+#ifdef ENGINE_HAS_HIP_FISH_FAST_SAMPLER
+            detail::hip_fast_sampler_destroy(hip_sampler_);
+            hip_sampler_ = nullptr;
+#endif
             core::release_backend_graph_resources(runtime_->backend(), graph_);
             if (gallocr_ != nullptr) {
                 ggml_gallocr_free(gallocr_);
             }
             if (state_buffer_ != nullptr) {
                 ggml_backend_buffer_free(state_buffer_);
+            }
+        }
+
+        void run_initial_step(const std::vector<float> & input, FishARProfile & profile) {
+            const auto & config = runtime_->assets().config.fast;
+            if (static_cast<int64_t>(input.size()) != config.dim) {
+                throw std::runtime_error("Fish Audio fast AR input size mismatch");
+            }
+            ++profile.fast_runs;
+            auto timing_start = Clock::now();
+#ifdef ENGINE_HAS_HIP_FISH_FAST_SAMPLER
+            if (hip_sampler_ != nullptr) {
+                detail::hip_fast_sampler_prepare_step(
+                    hip_sampler_,
+                    0,
+                    static_cast<int32_t>(config.num_codebooks),
+                    static_cast<int32_t *>(position_->data),
+                    mask_->data,
+                    ggml_backend_cuda_get_stream(runtime_->backend()));
+            } else
+#endif
+            {
+                const int32_t pos = 0;
+                ggml_backend_tensor_set(position_, &pos, 0, sizeof(pos));
+                const auto visible = ggml_fp32_to_fp16(0.0F);
+                std::fill(mask_scratch_.begin(), mask_scratch_.end(), ggml_fp32_to_fp16(-INFINITY));
+                mask_scratch_[0] = visible;
+                ggml_backend_tensor_set(mask_, mask_scratch_.data(), 0, mask_scratch_.size() * sizeof(ggml_fp16_t));
+            }
+            profile.fast_mask_upload_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
+            timing_start = Clock::now();
+            ggml_backend_tensor_set(input_, input.data(), 0, input.size() * sizeof(float));
+            profile.fast_input_upload_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
+            core::set_backend_threads(runtime_->backend(), runtime_->threads());
+            timing_start = Clock::now();
+            const ggml_status status = core::compute_backend_graph(runtime_->backend(), graph_, nullptr, "fish_audio.ar.fast");
+            ggml_backend_synchronize(runtime_->backend());
+            profile.fast_graph_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
+            if (status != GGML_STATUS_SUCCESS) {
+                throw std::runtime_error("Fish Audio fast AR graph compute failed");
             }
         }
 
@@ -1378,6 +1500,54 @@ private:
             return logits;
         }
 
+#ifdef ENGINE_HAS_HIP_FISH_FAST_SAMPLER
+        detail::HipFastTopKResult run_topk_code(
+            int32_t code,
+            int64_t position,
+            int top_k,
+            FishARProfile & profile) {
+            const auto & config = runtime_->assets().config.fast;
+            if (hip_sampler_ == nullptr || code < 0 || code >= config.vocab_size) {
+                throw std::runtime_error("HIP Fish fast AR embedding gather is unavailable or code is invalid");
+            }
+            ++profile.fast_runs;
+            auto timing_start = Clock::now();
+            detail::hip_fast_sampler_prepare_step(
+                hip_sampler_,
+                static_cast<int32_t>(position),
+                static_cast<int32_t>(config.num_codebooks),
+                static_cast<int32_t *>(position_->data),
+                mask_->data,
+                ggml_backend_cuda_get_stream(runtime_->backend()));
+            profile.fast_mask_upload_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
+            timing_start = Clock::now();
+            detail::hip_fast_sampler_gather_embedding(
+                hip_sampler_,
+                code,
+                static_cast<float *>(input_->data),
+                ggml_backend_cuda_get_stream(runtime_->backend()));
+            profile.fast_input_upload_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
+            core::set_backend_threads(runtime_->backend(), runtime_->threads());
+            timing_start = Clock::now();
+            const ggml_status status = core::compute_backend_graph(runtime_->backend(), graph_, nullptr, "fish_audio.ar.fast");
+            ggml_backend_synchronize(runtime_->backend());
+            profile.fast_graph_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
+            if (status != GGML_STATUS_SUCCESS) {
+                throw std::runtime_error("Fish Audio fast AR graph compute failed");
+            }
+            detail::HipFastTopKResult result;
+            timing_start = Clock::now();
+            detail::hip_fast_sampler_topk(
+                hip_sampler_,
+                static_cast<const float *>(logits_->data),
+                top_k,
+                &result);
+            profile.fast_output_read_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
+            return result;
+        }
+
+#endif
+
     private:
         std::shared_ptr<const FishARWeightsRuntime> runtime_;
         std::unique_ptr<ggml_context, GgmlContextDeleter> state_ctx_;
@@ -1390,6 +1560,9 @@ private:
         ggml_cgraph * graph_ = nullptr;
         ggml_gallocr_t gallocr_ = nullptr;
         ggml_backend_buffer_t state_buffer_ = nullptr;
+#ifdef ENGINE_HAS_HIP_FISH_FAST_SAMPLER
+        void * hip_sampler_ = nullptr;
+#endif
     };
 
     void ensure_prefill_graph(int64_t steps, FishARProfile & profile) {
@@ -1473,26 +1646,52 @@ private:
         if (!is_semantic_token(config, main_token)) {
             return frame;
         }
-        const auto fast0_logits = fast_graph_->run(slow_hidden, 0, profile);
+#ifdef ENGINE_HAS_HIP_FISH_FAST_SAMPLER
+        const bool hip_resident_fast_path =
+            runtime_->backend_type() == core::BackendType::Hip &&
+            options.top_k > 0 && options.top_k <= detail::kHipFastSamplerMaxTopK;
+        if (hip_resident_fast_path) {
+            fast_graph_->run_initial_step(slow_hidden, profile);
+        } else
+#endif
+        {
+            (void) fast_graph_->run(slow_hidden, 0, profile);
+        }
         int32_t code = std::clamp<int32_t>(
             main_token - static_cast<int32_t>(config.semantic_start_token_id),
             0,
             static_cast<int32_t>(config.fast.vocab_size - 1));
         frame[1] = code;
         for (int64_t codebook = 1; codebook < config.fast.num_codebooks; ++codebook) {
-            timing_start = Clock::now();
-            const auto embedding = build_fast_embedding(config, weights, code);
-            profile.fast_embedding_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
-            const auto logits = fast_graph_->run(embedding, codebook, profile);
-            timing_start = Clock::now();
-            code = sample_from_logits(
-                logits,
-                options.temperature,
-                options.top_p,
-                options.top_k,
-                sample,
-                sampling_policy_);
-            profile.sample_fast_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
+#ifdef ENGINE_HAS_HIP_FISH_FAST_SAMPLER
+            if (hip_resident_fast_path) {
+                const auto topk = fast_graph_->run_topk_code(code, codebook, options.top_k, profile);
+                timing_start = Clock::now();
+                code = sample_from_hip_topk(
+                    topk,
+                    static_cast<size_t>(config.fast.vocab_size),
+                    options.temperature,
+                    options.top_p,
+                    sample,
+                    sampling_policy_);
+                profile.sample_fast_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
+            } else
+#endif
+            {
+                timing_start = Clock::now();
+                const auto embedding = build_fast_embedding(config, weights, code);
+                profile.fast_embedding_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
+                const auto logits = fast_graph_->run(embedding, codebook, profile);
+                timing_start = Clock::now();
+                code = sample_from_logits(
+                    logits,
+                    options.temperature,
+                    options.top_p,
+                    options.top_k,
+                    sample,
+                    sampling_policy_);
+                profile.sample_fast_ms += engine::debug::elapsed_ms(timing_start, Clock::now());
+            }
             frame[static_cast<size_t>(codebook + 1)] = code;
         }
         return frame;

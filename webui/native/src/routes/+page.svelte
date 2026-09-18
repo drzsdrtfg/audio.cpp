@@ -34,6 +34,7 @@
   import MediaPreview from '$lib/MediaPreview.svelte';
   import { defaultChunkBudget, splitTtsChunks } from '$lib/text';
   import { UI_THEME_STORAGE_KEY, resolvedTheme, resolveUiTheme, uiThemes, type UiTheme } from '$lib/theme';
+  import { modelStudioPanelFor, type GenericControlReplacements } from '$lib/models/panels';
   import Arena from './Arena.svelte';
   import type {
     AudioOutput,
@@ -145,11 +146,16 @@
   const exposeAllStudioPackageFamilies = new Set([
     'audiosr',
     'controlfoley',
+    'breeze_tts',
+    'cosyvoice3',
     'firered_audio',
     'fireredtts3',
+    'irodori_tts',
+    'kokoro_tts',
     'meanvc2',
     'midashenglm_gen'
   ]);
+  const noGenericControlReplacements: GenericControlReplacements = {};
 
   function chooseUiLanguage(code: string) {
     uiLanguage = resolveUiLanguage([code]);
@@ -246,6 +252,15 @@
     }
   }
 
+  function ensureYue2DefaultLyrics(entry = selected) {
+    if (entry?.family !== 'yue2' || lyrics.trim()) return;
+    lyrics = entry.default_text || '';
+  }
+
+  function requestText() {
+    return text.trim() ? text : (selected.default_text || '');
+  }
+
   const workflowTabs = [
     { id: 'tts', label: 'Text to speech', filterLabel: 'TTS', tasks: ['tts', 'clon'] },
     { id: 'asr', label: 'ASR / Transcription', filterLabel: 'ASR', tasks: ['asr'] },
@@ -272,8 +287,11 @@
     qwen3_asr: 'Qwen3-ASR',
     vevo2: 'Vevo2',
     seed_vc: 'Seed-VC',
+    breeze_tts: 'BreezeTTS 2',
+    cosyvoice3: 'CosyVoice3',
     magpie_tts: 'MagpieTTS',
     meanvc2: 'MeanVC2',
+    niagara_asr: 'Niagara ASR',
     personaplex: 'PersonaPlex'
   };
 
@@ -375,8 +393,9 @@
   $: modelGroups = groupCatalog(activeCatalog);
   $: selected = activeCatalog.find((entry) => entry.id === selectedId) || activeCatalog[0] || catalog[0];
   $: activeWorkflowSpec = workflowTabs.find((workflow) => workflow.id === activeWorkflow) || workflowTabs[0];
-  $: workflowModels = activeCatalog.filter((entry) =>
-    activeWorkflowSpec.tasks.some((task) => task === entry.task));
+  $: workflowModels = activeCatalog
+    .filter((entry) => activeWorkflowSpec.tasks.some((task) => task === entry.task))
+    .sort((left, right) => compareModelNames(left.display_name, right.display_name));
   $: filteredModelGroups = modelGroups.map((group) => ({
     ...group,
     entries: group.entries.filter((entry) => {
@@ -386,20 +405,29 @@
   })).filter((group) => group.entries.length > 0);
   $: isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
     modelMatchesSelectedPackage(model, selected));
+  $: modelStudioPanelConfig = modelStudioPanelFor(selected?.family);
+  $: modelStudioPanel = modelStudioPanelConfig?.component;
+  $: replacesGenericControls = modelStudioPanelConfig?.replacesGenericControls || noGenericControlReplacements;
+  $: usesYue2Request = modelStudioPanelConfig?.requestMode === 'yue2';
   $: isFireRedAudioEdit = selected?.id === 'firered-audio-semantic-edit' ||
     selected?.id === 'firered-audio-acoustic-edit';
   $: allowsAutoDuration = selected?.family === 'ace_step';
   $: usesDurationSecOption =
     selected?.family === 'controlfoley' ||
     selected?.family === 'midashenglm_gen';
+  $: supportsTextOnlyTts = (
+    selected?.family === 'breeze_tts' ||
+    selected?.family === 'chatterbox_turbo'
+  ) && selected?.task === 'tts';
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi'].includes(selected?.task) ||
     isFireRedAudioEdit;
-  $: acceptsSource = needsSource || selected?.task === 'gen';
+  $: acceptsSource = needsSource || (selected?.task === 'gen' && !replacesGenericControls.genSource);
   $: acceptsVideo = selected?.request_options?.includes('video') === true;
   $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
     (selected?.task === 's2s' && selected?.family === 'personaplex') ||
-    (selected?.task === 'tts' && !['supertonic'].includes(selected?.family));
+    (selected?.task === 'tts' && !['supertonic'].includes(selected?.family) && !supportsTextOnlyTts);
   $: usesVibeVoiceSpeakerFiles = selected?.family === 'vibevoice';
+  $: usesBuiltInVoiceSelector = Boolean(selected?.builtin_voices?.length);
   $: isQwenBase = selected?.task === 'tts' && selected?.family === 'qwen3_tts' &&
     !selected?.id.includes('custom');
   $: allowsQuickStartVoice = ['tts', 'clon'].includes(selected?.task);
@@ -409,16 +437,22 @@
   $: referenceTextRequired = requiresRequestOption(selected, 'reference_text') ||
     (Boolean(voiceFile) && isQwenBase);
   $: quickStartVoices = server && !server.ui_management
-    ? configuredVoices
+    ? Array.from(new Set([
+        ...configuredVoices,
+        ...(usesBuiltInVoiceSelector ? selected?.builtin_voices || [] : [])
+      ]))
+    : usesBuiltInVoiceSelector
+      ? selected?.builtin_voices || []
     : Object.entries(demoVoiceSources)
       .filter(([, source]) => bundledVoices.includes(source))
       .map(([voice]) => voice);
-  $: quickStartVoicePreview = quickStartVoice && server?.ui_management !== false
+  $: quickStartVoicePreview = quickStartVoice && server?.ui_management !== false && !usesBuiltInVoiceSelector
     ? voicePreviewUrl(demoVoiceSources[quickStartVoice] || quickStartVoice)
     : '';
-  $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task);
+  $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task) &&
+    !replacesGenericControls.text;
   $: supportsLiveAsr = selected?.task === 'asr' &&
-    ['voxtral_realtime', 'nemotron_asr', 'higgs_audio_stt', 'sense_asr'].includes(selected?.family);
+    ['voxtral_realtime', 'nemotron_asr', 'higgs_audio_stt', 'sense_asr', 'vibevoice_asr_streaming'].includes(selected?.family);
   $: modelInventoryLoading = server === null ||
     (Boolean(server.ui_management) && Object.keys(packageSizes).length === 0 && packageSizeState !== 'failed');
   $: selectableModelIds = new Set(activeCatalog.filter((entry) => {
@@ -476,13 +510,19 @@
 
   function mergedSessionOptions(entry: CatalogEntry) {
     const packageChoice = selectedPackageChoice(entry);
-    return { ...(entry.session_options || {}), ...(packageChoice?.session_options || {}) };
+    const sessionParams = entry.id === selectedId ? sessionParameterOptions() : {};
+    return { ...(entry.session_options || {}), ...(packageChoice?.session_options || {}), ...sessionParams };
   }
 
   function packageSessionOptionsMatch(entry: CatalogEntry, choice: InstallPackageChoice, model: LoadedModel) {
-    const expected = choice.session_options || {};
+    const expected = mergedSessionOptions(entry);
     const keys = Array.from(new Set((entry.install_packages || [])
       .flatMap((candidate) => Object.keys(candidate.session_options || {}))));
+    if (entry.id === selectedId) {
+      for (const spec of paramSpecs.filter((candidate) => candidate.scope === 'session')) {
+        keys.push(spec.session_option || spec.name);
+      }
+    }
     if (!keys.length) return true;
     const actual = model.session_options || {};
     return keys.every((key) => actual[key] === expected[key]);
@@ -988,6 +1028,16 @@
     } else if (selected?.task === 'gen') {
       duration = 30;
     }
+    if (usesYue2Request) {
+      text = '';
+      lyrics = '';
+      ensureYue2DefaultLyrics();
+    } else if (!text.trim() && selected?.default_text) {
+      text = selected.default_text;
+    }
+    if (selected?.builtin_voices?.length && selected.default_voice && !quickStartVoice) {
+      quickStartVoice = selected.default_voice;
+    }
     advancedJson = '{}';
   }
 
@@ -1113,7 +1163,8 @@
     try {
       const targetPath = comparablePath(modelPath);
       const replaced = loadedModels.filter((model) => model.loaded &&
-        (model.id !== selected.id || comparablePath(model.path) !== targetPath));
+        (model.id !== selected.id || comparablePath(model.path) !== targetPath ||
+          !modelMatchesSelectedPackage(model, selected)));
       for (const model of replaced) {
         log(`Unloading ${loadedModelName(model)} before loading ${selected.display_name}.`);
         await unloadModel(model.id);
@@ -1220,7 +1271,21 @@
       throw new Error(`Advanced JSON is invalid: ${error instanceof Error ? error.message : error}`);
     }
     const defaults = selected.default_options || {};
-    return { ...defaults, ...advancedValues, ...raw };
+    const requestValues = Object.fromEntries(Object.entries(advancedValues)
+      .filter(([name, value]) => {
+        const spec = paramSpecs.find((candidate) => candidate.name === name);
+        if (spec?.scope === 'session') return false;
+        if (usesYue2Request && typeof value === 'string' && value.trim().length === 0) return false;
+        return true;
+      }));
+    return { ...defaults, ...requestValues, ...raw };
+  }
+
+  function sessionParameterOptions() {
+    return Object.fromEntries(paramSpecs
+      .filter((spec) => spec.scope === 'session')
+      .map((spec) => [spec.session_option || spec.name, String(advancedValues[spec.name] ?? spec.default ?? '')])
+      .filter(([, value]) => value.length > 0));
   }
 
   function base64Text(value: string): string {
@@ -1411,7 +1476,13 @@
     }
     try {
       configuredVoices = await availableVoices(selectedId);
-      if (quickStartVoice && !configuredVoices.includes(quickStartVoice)) quickStartVoice = '';
+      if (quickStartVoice) {
+        const allowed = new Set([
+          ...configuredVoices,
+          ...(usesBuiltInVoiceSelector ? selected?.builtin_voices || [] : [])
+        ]);
+        if (!allowed.has(quickStartVoice)) quickStartVoice = '';
+      }
     } catch (error) {
       configuredVoices = [];
       log(`Configured voices unavailable: ${error instanceof Error ? error.message : error}`);
@@ -1641,13 +1712,19 @@
       } else {
         if (needsSource && !audio) throw new StatusWarning('Choose a source audio file.');
         const request: Record<string, unknown> = { options };
-        if (['gen', 's2s', 'align'].includes(selected.task) && text.trim()) request.text = text;
-        if (['gen', 's2s', 'align'].includes(selected.task) && language.trim()) request.language = language;
+        if (['gen', 's2s', 'align'].includes(selected.task) && text.trim() && !usesYue2Request) request.text = text;
+        if (['gen', 's2s', 'align'].includes(selected.task) && language.trim() && !usesYue2Request) request.language = language;
         if (selected.task === 'gen') {
-          if (lyrics.trim()) request.lyrics = lyrics;
-          if (!isFireRedAudioEdit) {
-            if (usesDurationSecOption) options.duration_sec = duration;
-            else request.duration_seconds = duration;
+          if (usesYue2Request) {
+            request.lyrics = lyrics.trim();
+          } else {
+            const resolvedText = requestText();
+            if (resolvedText) request.text = resolvedText;
+            if (lyrics.trim()) request.lyrics = lyrics;
+            if (!isFireRedAudioEdit) {
+              if (usesDurationSecOption) options.duration_sec = duration;
+              else request.duration_seconds = duration;
+            }
           }
           request.seed = resolvedSeed;
           if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
@@ -2123,7 +2200,7 @@
           <span>{selectedId ? tr('studio.estimatedVram', { value: selected?.min_vram_gb || '?' }) : tr('studio.vram')}</span>
         </div>
 
-        {#if selectedId && (selected.install_packages || []).length}
+        {#if selectedId && (selected.install_packages || []).length && !replacesGenericControls.packageButtons}
           <div class="studio-package-buttons" aria-label="Model format">
             {#each studioPackageSlots(selected) as slot}
               {@const choice = slot.choice}
@@ -2182,9 +2259,28 @@
         {/if}
 
         {#if selected.task === 'gen'}
-          <label for="lyrics">{tr('request.lyrics')} <span>{lyricsRequired ? tr('voice.required') : tr('request.optional')}</span></label>
-          <textarea id="lyrics" rows="3" bind:value={lyrics} required={lyricsRequired}
-            aria-required={lyricsRequired} placeholder="[Verse]…"></textarea>
+          {#if modelStudioPanel}
+            <svelte:component
+              this={modelStudioPanel}
+              bind:lyrics
+              bind:seed
+              {paramSpecs}
+              {advancedValues}
+              catalogEntries={activeCatalog}
+              {loadedModels}
+              {server}
+              modelPathFor={selectedModelPath}
+              sessionOptionsFor={mergedSessionOptions}
+              refreshModels={refresh}
+              {log}
+              {tr}
+              {localizedParameterText}
+              {setParameterValue} />
+          {:else}
+            <label for="lyrics">{tr('request.lyrics')} <span>{lyricsRequired ? tr('voice.required') : tr('request.optional')}</span></label>
+            <textarea id="lyrics" rows="3" bind:value={lyrics} required={lyricsRequired}
+              aria-required={lyricsRequired} placeholder="[Verse]…"></textarea>
+          {/if}
           {#if selected.family === 'ace_step'}
             <div class="media-actions">
               <button type="button" disabled={running || rewritingCaption || (!text.trim() && !lyrics.trim())}
@@ -2207,13 +2303,13 @@
         {/if}
 
         <div class="field-grid">
-          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task)}
+          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task) && !replacesGenericControls.language}
             <div>
               <label for="language">{tr('request.language')} <span>{tr('request.autoLanguage')}</span></label>
               <input id="language" bind:value={language} placeholder="auto" />
             </div>
           {/if}
-          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task)}
+          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task) && !replacesGenericControls.seed}
             <div>
               <label for="seed">{tr('request.seed')} <span>{tr('request.randomSeed')}</span></label>
               <input id="seed" type="number" min="-1" max="4294967295" step="1" bind:value={seed} />
@@ -2225,14 +2321,11 @@
               <input id="tokens" type="number" min="1" bind:value={maxTokens} />
             </div>
           {/if}
-          {#if selected.task === 'gen'}
+          {#if selected.task === 'gen' && !replacesGenericControls.duration}
             <div>
-              <label for="duration">{tr('request.duration')}</label>
+              <label for="duration">{tr('request.duration')}{#if allowsAutoDuration} <span>{tr('request.autoDuration')}</span>{/if}</label>
               <input id="duration" type="number" min={allowsAutoDuration ? -1 : 1} step="0.1" value={duration}
                 on:input={(event) => setDuration(event.currentTarget.valueAsNumber)} />
-              {#if allowsAutoDuration}
-                <small>{tr('request.autoDuration')}</small>
-              {/if}
               {#if selected.family === 'minimax_h3'}
                 <small>{tr('request.minimaxFrames', { frames: Number(advancedValues.num_frames || 0) })}</small>
               {/if}
@@ -2299,49 +2392,58 @@
               <div class="quick-voice-note">
                 {tr('voice.bundledNote')}
               </div>
-              <MediaPreview src={quickStartVoicePreview} name={quickStartVoice} kind="audio" label={tr('file.preview')} />
+              {#if quickStartVoicePreview}
+                <MediaPreview src={quickStartVoicePreview} name={quickStartVoice} kind="audio" label={tr('file.preview')} />
+              {/if}
             {/if}
           {/if}
-          <div class="reference-input-grid">
-            <div>
-              <label for="voice">{tr('voice.reference')} <span>{referenceVoiceRequired ? tr('voice.required') : tr('voice.optional')}</span></label>
-              <input id="voice" class="file file-native" type="file" accept="audio/*"
-                bind:this={voiceInput}
-                on:change={(event) => chooseVoiceReference(event.currentTarget.files?.[0] || null)} />
-              <label class="file-picker" for="voice"><strong>{tr('file.choose')}</strong><span>{voiceFile?.name || tr('file.none')}</span></label>
+          {#if !usesBuiltInVoiceSelector || !quickStartVoice}
+            <div class="reference-input-grid">
+              <div>
+                <label for="voice">{tr('voice.reference')} <span>{referenceVoiceRequired ? tr('voice.required') : tr('voice.optional')}</span></label>
+                <input id="voice" class="file file-native" type="file" accept="audio/*"
+                  bind:this={voiceInput}
+                  on:change={(event) => chooseVoiceReference(event.currentTarget.files?.[0] || null)} />
+                <label class="file-picker" for="voice"><strong>{tr('file.choose')}</strong><span>{voiceFile?.name || tr('file.none')}</span></label>
+              </div>
+              <div>
+                <label for="reference-file">{tr('voice.referenceText')} <span>.txt</span></label>
+                <input id="reference-file" class="file file-native" type="file" accept=".txt,text/plain"
+                  bind:this={referenceTextInput}
+                  on:change={(event) => chooseReferenceText(event.currentTarget.files?.[0] || null)} />
+                <label class="file-picker" for="reference-file"><strong>{tr('file.choose')}</strong><span>{referenceTextFile?.name || tr('file.none')}</span></label>
+              </div>
             </div>
-            <div>
-              <label for="reference-file">{tr('voice.referenceText')} <span>.txt</span></label>
-              <input id="reference-file" class="file file-native" type="file" accept=".txt,text/plain"
-                bind:this={referenceTextInput}
-                on:change={(event) => chooseReferenceText(event.currentTarget.files?.[0] || null)} />
-              <label class="file-picker" for="reference-file"><strong>{tr('file.choose')}</strong><span>{referenceTextFile?.name || tr('file.none')}</span></label>
+          {/if}
+          {#if !usesBuiltInVoiceSelector || !quickStartVoice}
+            <div class="media-actions">
+              {#if recordingTarget === 'voice'}
+                <button class="danger" type="button" on:click={stopRecording}>{tr('request.stopRecording')}</button>
+                <span class="recording-dot">{tr('voice.recording')}</span>
+              {:else}
+                <button type="button" disabled={Boolean(recorder) || liveRecording}
+                  on:click={() => startRecording('voice')}>{tr('request.recordMicrophone')}</button>
+                <button type="button"
+                  disabled={!quickStartVoice && !savedVoiceId && !voiceFile && !referenceTextFile && !referenceText.trim()}
+                  on:click={clearVoiceReference}>Clear reference</button>
+                {#if voiceFile}<span>{voiceFile.name}</span>{/if}
+              {/if}
             </div>
-          </div>
-          <div class="media-actions">
-            {#if recordingTarget === 'voice'}
-              <button class="danger" type="button" on:click={stopRecording}>{tr('request.stopRecording')}</button>
-              <span class="recording-dot">{tr('voice.recording')}</span>
-            {:else}
-              <button type="button" disabled={Boolean(recorder) || liveRecording}
-                on:click={() => startRecording('voice')}>{tr('request.recordMicrophone')}</button>
-              <button type="button"
-                disabled={!quickStartVoice && !savedVoiceId && !voiceFile && !referenceTextFile && !referenceText.trim()}
-                on:click={clearVoiceReference}>Clear reference</button>
-              {#if voiceFile}<span>{voiceFile.name}</span>{/if}
-            {/if}
-          </div>
-          <MediaPreview file={voiceFile} kind="audio" label={tr('file.preview')} />
-          <label for="reference">{tr('voice.transcript')}
-            <span>{referenceTextRequired ? tr('voice.requiredClone') : tr('voice.recommendedClone')}</span>
-          </label>
-          <textarea id="reference" rows="2" bind:value={referenceText}
-            placeholder={tr('voice.transcriptPlaceholder')}></textarea>
+          {/if}
+          {#if !usesBuiltInVoiceSelector || !quickStartVoice}
+            <MediaPreview file={voiceFile} kind="audio" label={tr('file.preview')} />
+            <label for="reference">{tr('voice.transcript')}
+              <span>{referenceTextRequired ? tr('voice.requiredClone') : tr('voice.recommendedClone')}</span>
+            </label>
+            <textarea id="reference" rows="2" bind:value={referenceText}
+              placeholder={tr('voice.transcriptPlaceholder')}></textarea>
+          {/if}
           <!--
             Saved voices keep a named reference recording and transcript for reuse. They are persisted only
             in this browser's IndexedDB, are never uploaded until the user runs a request, do not sync to
             another browser/device, and are removed if this site's browser data is cleared.
           -->
+          {#if !usesBuiltInVoiceSelector || !quickStartVoice}
           <div class="voice-library">
             <div>
               <label for="saved-voice">{tr('voice.saved')} <span>{tr('voice.browserOnly')}</span></label>
@@ -2361,6 +2463,7 @@
                 on:click={removeCurrentVoice}>{tr('common.delete')}</button>
             </div>
           </div>
+          {/if}
         {/if}
 
         {#if usesVibeVoiceSpeakerFiles}
@@ -2388,7 +2491,7 @@
           </div>
         {/if}
 
-        {#if paramSpecs.length}
+        {#if paramSpecs.length && !replacesGenericControls.params}
           <details>
             <summary>{tr('options.modelParameters')} <span>{paramSpecs.length}</span></summary>
             <div class="parameter-grid">
@@ -2429,10 +2532,12 @@
           </details>
         {/if}
 
-        <details>
-          <summary>{tr('options.additional')} <span>JSON</span></summary>
-          <textarea class="code" rows="3" bind:value={advancedJson}></textarea>
-        </details>
+        {#if !replacesGenericControls.advancedJson}
+          <details>
+            <summary>{tr('options.additional')} <span>JSON</span></summary>
+            <textarea class="code" rows="3" bind:value={advancedJson}></textarea>
+          </details>
+        {/if}
 
         <div class="runbar">
           <button class="run" disabled={!selectedId || running || (!isLoaded && installed === false)} on:click={run}

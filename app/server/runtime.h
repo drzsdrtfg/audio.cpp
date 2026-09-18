@@ -2,6 +2,7 @@
 
 #include "busy_guard.h"
 #include "config.h"
+#include "frontend.h"
 #include "http.h"
 #if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
 #include "model_installer.h"
@@ -27,7 +28,7 @@
 
 namespace minitts::server {
 
-class ServerState final : public IHttpHandler {
+class ServerState final : public IHttpHandler, public ServerFrontendContext {
 public:
     ServerState(
         ServerConfig config,
@@ -36,6 +37,10 @@ public:
     ~ServerState() override;
 
     HttpResponse handle(const HttpRequest & request) override;
+    HttpResponse forward_to_core(const HttpRequest & request) override;
+    std::filesystem::path resolve_request_path(const std::filesystem::path & path) const override;
+    std::filesystem::path make_frontend_temp_path(std::string_view filename) override;
+    std::unique_ptr<ServerFrontendListener> make_frontend_listener(std::string_view name) const;
 
     // Server-level `live_ingest` policy with this request's model override applied.
     // Deliberately does not reject an unknown or non-streaming model: it runs before
@@ -71,6 +76,11 @@ private:
         // the request thread, which costs ~0.9 s per request for large GGUFs.
         // `true` mirrors model_accepts_request_option's no-contract behavior.
         bool accepts_reference_text = true;
+        // Same treatment for `language`. Clients send the field on every
+        // transcription whether or not the user chose one, so a model whose
+        // contract omits it would reject the whole request over an option
+        // nobody set. Resolved once at registration for the same cost reason.
+        bool accepts_language = true;
         // Serializes runs on this model and bounds how long a caller waits for its
         // turn; see BusyGuard.
         BusyGuard busy;
@@ -90,6 +100,7 @@ private:
     engine::runtime::RunMode model_run_mode(const LoadedModel & model) const;
 
     void load_models();
+    HttpResponse handle_request(const HttpRequest & request, bool use_frontends);
     std::unique_ptr<LoadedModel> make_model(ServerModelConfig config);
     // Recompute the per-model, config-derived request-option flags (currently
     // accepts_reference_text). Called at registration and on reconfiguration.
@@ -167,14 +178,24 @@ private:
         const engine::runtime::TaskRequest & request,
         const engine::io::json::Value & body);
     HttpResponse handle_speech_live(const HttpRequest & request);
-    HttpResponse handle_transcription(const HttpRequest & request);
-    HttpResponse handle_transcription_json(const std::string & body_text);
-    HttpResponse handle_transcription_multipart(const std::string & body_text, const std::string & boundary);
+    // detail selects the /v1/audio/transcriptions/details response, which adds the
+    // segment, speaker-turn and word arrays the plain route drops.
+    HttpResponse handle_transcription(const HttpRequest & request, bool detail = false);
+    HttpResponse handle_transcription_json(const std::string & body_text, bool detail = false);
+    HttpResponse handle_transcription_multipart(
+        const std::string & body_text, const std::string & boundary, bool detail = false);
     HttpResponse run_transcription(
         LoadedModel & model,
         const engine::runtime::TaskRequest & request,
-        std::optional<int> busy_timeout_ms = std::nullopt);
+        std::optional<int> busy_timeout_ms = std::nullopt,
+        bool detail = false);
     HttpResponse run_transcription_stream(
+        LoadedModel & model,
+        const engine::runtime::TaskRequest & request,
+        std::optional<int> busy_timeout_ms = std::nullopt);
+    HttpResponse handle_alignment(const HttpRequest & request);
+    HttpResponse handle_alignment_multipart(const std::string & body_text, const std::string & boundary);
+    HttpResponse run_alignment(
         LoadedModel & model,
         const engine::runtime::TaskRequest & request,
         std::optional<int> busy_timeout_ms = std::nullopt);
@@ -202,6 +223,7 @@ private:
     // unrelated first loads stay concurrent there.
     std::mutex model_load_mutex_;
     std::filesystem::path upload_root_;
+    std::mutex upload_root_mutex_;
     std::filesystem::path repository_root_;
 #if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
     std::filesystem::path default_models_root_;
@@ -216,6 +238,7 @@ private:
     std::atomic<std::int64_t> last_activity_ms_{0};
     std::atomic<bool> idle_unload_shutdown_{false};
     std::thread idle_unload_thread_;
+    ServerFrontendRegistry frontends_;
 };
 
 }  // namespace minitts::server

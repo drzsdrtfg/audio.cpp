@@ -8,7 +8,7 @@
     {"name": "reference_duration_sec", "type": "slider", "label": "reference_duration_sec", "label_en": "Reference trim (s)", "default": 15.0, "minimum": 1.0, "maximum": 60.0, "step": 1.0, "info": "Trim the speaker reference before encoding. Around 10 s usually clones best."},
     {"name": "seed", "type": "number", "label": "seed", "label_en": "Seed", "default": 0, "minimum": 0, "step": 1, "precision": 0}
   ],
-  "_comment": "WebUI TTS 高级参数控件配置：按模型 family 动态生成控件（gr.render）。每项字段：name=选项键(随请求 options 透传给模型)；type=slider|number|bool|text|choice；label/info=显示文案；default=默认值(应等于模型默认，已按 src/models/<family>/*.cpp 校对)；minimum/maximum/step=数值范围；precision=0 表示整数；choices=下拉候选。规则：只有被用户改动过的控件值才会随请求发送；seed/max_tokens 已有专用输入框，勿在此重复；参考文本用『参考文本』框(reference_text)；文件路径/parity 类参数(如 *_noise_file)未纳入，可用『其它参数(JSON)』兜底框传。",
+  "_comment": "WebUI TTS 高级参数控件配置：按模型 family 动态生成控件（gr.render）。每项字段：name=选项键；type=slider|number|bool|text|choice；scope=session 时写入 session_options，否则随请求 options 透传给模型；label/info=显示文案；default=默认值(应等于模型默认，已按 src/models/<family>/*.cpp 校对)；minimum/maximum/step=数值范围；precision=0 表示整数；choices=下拉候选。seed/max_tokens 已有专用输入框，勿在此重复；参考文本用『参考文本』框(reference_text)；文件路径/parity 类参数(如 *_noise_file)未纳入，可用『其它参数(JSON)』兜底框传。",
 
   "qwen3_tts": [
     {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.9, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
@@ -98,10 +98,47 @@
     {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "default": "default", "choices": ["default", "tag_aware", "japanese", "endline"]}
   ],
 
+  "breeze_tts": [
+    {"name": "instruction", "type": "text", "label": "instruction", "label_en": "Instruction", "default": "", "placeholder": "Describe the target voice for VoiceDesign."},
+    {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size", "default": 600, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "default": "default", "choices": ["default", "tag_aware", "japanese", "endline"]},
+    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 1.0, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
+    {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.9, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
+    {"name": "depth_temperature", "type": "slider", "label": "depth_temperature", "default": 0.9, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
+    {"name": "top_k", "type": "number", "label": "top_k", "default": 50, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "top_p", "type": "slider", "label": "top_p", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.01}
+  ],
+
+  "breeze-tts": [
+    {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size", "default": 600, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "default": "default", "choices": ["default", "tag_aware", "japanese", "endline"]},
+    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "default": 1.0, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
+    {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.9, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
+    {"name": "depth_temperature", "type": "slider", "label": "depth_temperature", "default": 0.9, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
+    {"name": "top_k", "type": "number", "label": "top_k", "default": 50, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "top_p", "type": "slider", "label": "top_p", "default": 1.0, "minimum": 0.0, "maximum": 1.0, "step": 0.01}
+  ],
+
+  "cosyvoice3": [
+    {"name": "template_name", "type": "choice", "label": "template_name", "default": "zero_shot", "choices": ["zero_shot", "cross_lingual", "instruct"]},
+    {"name": "instruction", "type": "text", "label": "instruction", "label_en": "Instruction", "default": "", "placeholder": "Used by template_name=instruct."},
+    {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size", "default": 600, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "default": "default", "choices": ["default", "tag_aware", "japanese", "endline"]},
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 10, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "min_tokens", "type": "number", "label": "min_tokens", "default": 0, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "top_k", "type": "number", "label": "top_k", "default": 25, "minimum": 1, "step": 1, "precision": 0}
+  ],
+
   "inflect_v2": [
     {"name": "speaking_rate", "type": "slider", "label": "speaking_rate（语速倍率）", "label_en": "speaking_rate", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05},
     {"name": "variation", "type": "slider", "label": "variation（音色变化）", "label_en": "variation", "default": 0.667, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
     {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size（长文本分段字符数）", "label_en": "text_chunk_size", "default": 280, "minimum": 1, "step": 1, "precision": 0}
+  ],
+
+  "sanotts": [
+    {"name": "speaking_rate", "type": "slider", "label": "speaking_rate（语速倍率）", "label_en": "speaking_rate", "default": 1.0, "minimum": 0.5, "maximum": 2.0, "step": 0.05},
+    {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size（长文本分段字符数）", "label_en": "text_chunk_size", "default": 280, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "text_chunk_mode", "type": "choice", "label": "text_chunk_mode", "default": "word_budget", "choices": ["word_budget"]}
   ],
 
   "dramabox": [
@@ -155,6 +192,31 @@
     {"name": "guidance_scale", "type": "slider", "label": "Flow guidance scale", "default": 1.7, "minimum": 0.0, "maximum": 10.0, "step": 0.1},
     {"name": "ar_guidance_scale", "type": "slider", "label": "AR guidance scale", "default": 1.5, "minimum": 0.0, "maximum": 10.0, "step": 0.1, "info": "Classifier-free guidance of the semantic and residual code sampling."},
     {"name": "top_k", "type": "number", "label": "top_k", "default": 50, "minimum": 1, "maximum": 1024, "step": 1, "precision": 0}
+  ],
+
+  "yue2": [
+    {"name": "main_gguf", "type": "choice", "scope": "session", "session_option": "yue2.model_gguf", "label": "main_gguf", "label_en": "Main weights", "default": "yue2-3b-q8_0.gguf", "choices": ["yue2-3b-q8_0.gguf", "yue2-3b-q4_0.gguf", "yue2-3b-bf16.gguf"], "info": "Reload the model after changing this value."},
+    {"name": "vae_gguf", "type": "choice", "scope": "session", "session_option": "yue2.vae_gguf", "label": "vae_gguf", "label_en": "VAE weights", "default": "yue2-vae-f16.gguf", "choices": ["yue2-vae-f16.gguf", "yue2-vae-f32.gguf"], "info": "Reload the model after changing this value."},
+    {"name": "style", "type": "text", "label": "style", "label_en": "Style", "default": "English, indie pop, bright acoustic guitar, soft drums, warm lead vocal, polished demo mix", "placeholder": "English, city pop, groovy bass, synth, energetic vocal"},
+    {"name": "abc", "type": "text", "label": "abc", "label_en": "ABC score", "default": "", "placeholder": "Optional ABC notation. Use cot=melody or cot=full.", "lines": 4},
+    {"name": "abc_file", "type": "text", "label": "abc_file", "label_en": "ABC file path", "default": "", "placeholder": "/path/to/score.abc"},
+    {"name": "cot", "type": "choice", "label": "cot", "label_en": "Planning route", "default": "off", "choices": ["off", "melody", "full"], "info": "off = direct generation; melody/full use or generate ABC planning."},
+    {"name": "guidance_scale", "type": "slider", "label": "guidance_scale", "label_en": "Semantic guidance", "default": 1.01, "minimum": 0.0, "maximum": 5.0, "step": 0.01},
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "label_en": "NAR steps", "default": 8, "minimum": 1, "maximum": 64, "step": 1, "precision": 0},
+    {"name": "abc_temperature", "type": "slider", "label": "abc_temperature", "label_en": "ABC temperature", "default": 0.7, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
+    {"name": "abc_top_p", "type": "slider", "label": "abc_top_p", "label_en": "ABC top-p", "default": 0.9, "minimum": 0.01, "maximum": 1.0, "step": 0.01},
+    {"name": "abc_top_k", "type": "number", "label": "abc_top_k", "label_en": "ABC top-k", "default": 30, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "abc_repetition_penalty", "type": "slider", "label": "abc_repetition_penalty", "label_en": "ABC repetition penalty", "default": 1.005, "minimum": 0.1, "maximum": 2.0, "step": 0.001},
+    {"name": "abc_penalty_window", "type": "number", "label": "abc_penalty_window", "label_en": "ABC penalty window", "default": 100, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "abc_min_tokens", "type": "number", "label": "abc_min_tokens", "label_en": "ABC min tokens", "default": 32, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "abc_max_tokens", "type": "number", "label": "abc_max_tokens", "label_en": "ABC max tokens", "default": 4096, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "semantic_temperature", "type": "slider", "label": "semantic_temperature", "label_en": "Semantic temperature", "default": 1.0, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
+    {"name": "semantic_top_p", "type": "slider", "label": "semantic_top_p", "label_en": "Semantic top-p", "default": 0.95, "minimum": 0.01, "maximum": 1.0, "step": 0.01},
+    {"name": "semantic_top_k", "type": "number", "label": "semantic_top_k", "label_en": "Semantic top-k", "default": 100, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "semantic_repetition_penalty", "type": "slider", "label": "semantic_repetition_penalty", "label_en": "Semantic repetition penalty", "default": 1.2, "minimum": 0.1, "maximum": 2.0, "step": 0.01},
+    {"name": "semantic_penalty_window", "type": "number", "label": "semantic_penalty_window", "label_en": "Semantic penalty window", "default": 50, "minimum": 1, "step": 1, "precision": 0},
+    {"name": "semantic_min_tokens", "type": "number", "label": "semantic_min_tokens", "label_en": "Semantic min tokens", "default": 200, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "semantic_max_tokens", "type": "number", "label": "semantic_max_tokens", "label_en": "Semantic max tokens", "default": 9000, "minimum": 1, "step": 1, "precision": 0}
   ],
 
   "minimax_h3": [
@@ -217,13 +279,15 @@
     {"name": "route", "type": "choice", "label": "route（任务路线）", "default": "", "choices": ["", "style_preserved_vc", "style_converted_vc", "style_preserved_svc", "style_converted_svc", "singing_style_conversion", "editing"], "info": "留空=按任务默认；详见 webui/README.md"},
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "default": 32, "minimum": 1, "step": 1, "precision": 0, "info": "流匹配步数"},
     {"name": "use_pitch_shift", "type": "choice", "label": "use_pitch_shift（自动音高对齐）", "default": "", "choices": ["", "true", "false"], "info": "留空=按路线默认"},
+    {"name": "audio_chunk_duration_sec", "type": "number", "label": "audio_chunk_duration_sec（源音频分段秒数）", "default": 0.0, "minimum": 0.0, "step": 1.0, "info": "0=关闭；仅用于 source-audio VC/SVC 路线"},
+    {"name": "cross_fade_duration_sec", "type": "number", "label": "cross_fade_duration_sec（分段重叠/淡化秒数）", "default": 1.0, "minimum": 0.0, "step": 0.1, "info": "source-audio 分段启用时作为输入重叠和输出交叉淡化时长"},
     {"name": "temperature", "type": "slider", "label": "temperature（AR 路线用）", "default": 0.7, "minimum": 0.0, "maximum": 2.0, "step": 0.05, "info": "默认取自模型 generation_config.json"},
     {"name": "top_k", "type": "number", "label": "top_k（AR 路线用）", "default": 20, "minimum": 0, "step": 1, "precision": 0, "info": "默认取自模型 generation_config.json"},
     {"name": "top_p", "type": "slider", "label": "top_p（AR 路线用）", "default": 0.8, "minimum": 0.0, "maximum": 1.0, "step": 0.01}
   ],
 
   "heartmula": [
-    {"name": "tags", "type": "text", "label": "tags（必填，逗号分隔）", "default": "", "placeholder": "pop,bright,drums,female vocals", "info": "风格/情绪/乐器/人声标签，模型必需"},
+    {"name": "tags", "type": "text", "label": "tags（逗号分隔）", "default": "pop", "placeholder": "pop,bright,drums,female vocals", "info": "风格/情绪/乐器/人声标签"},
     {"name": "temperature", "type": "slider", "label": "temperature", "default": 1.0, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
     {"name": "top_k", "type": "number", "label": "top_k", "default": 50, "minimum": 0, "step": 1, "precision": 0},
     {"name": "guidance_scale", "type": "slider", "label": "guidance_scale（MuLa CFG）", "default": 1.5, "minimum": 0.0, "maximum": 5.0, "step": 0.1},
@@ -360,9 +424,27 @@
     {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.7, "minimum": 0.0, "maximum": 2.0, "step": 0.05}
   ],
 
+  "sopro_tts": [
+    {"name": "language", "type": "choice", "label": "language", "label_en": "Language tag", "default": "", "choices": ["", "en", "pt", "fr", "de"], "info": "Optional <|lang_xx|> tag; helps pronunciation on ambiguous text."},
+    {"name": "temperature", "type": "slider", "label": "temperature", "label_en": "Temperature", "default": 0.8, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
+    {"name": "top_p", "type": "slider", "label": "top_p", "label_en": "Top-p", "default": 0.9, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
+    {"name": "top_k", "type": "number", "label": "top_k", "label_en": "Top-k", "default": 25, "minimum": 0, "step": 1, "precision": 0, "info": "0 disables top-k truncation."},
+    {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps", "label_en": "Acoustic steps", "default": 2, "minimum": 1, "maximum": 32, "step": 1, "precision": 0, "info": "Rectified-flow Euler steps for the acoustic head."},
+    {"name": "max_seconds", "type": "number", "label": "max_seconds", "label_en": "Max seconds per segment", "default": 30.0, "minimum": 1.0, "maximum": 60.0, "step": 0.5, "precision": 1},
+    {"name": "min_seconds", "type": "number", "label": "min_seconds", "label_en": "Min seconds per segment", "default": 0.4, "minimum": 0.0, "maximum": 10.0, "step": 0.1, "precision": 1, "info": "Must not exceed max_seconds."},
+    {"name": "ref_seconds", "type": "number", "label": "ref_seconds", "label_en": "Reference seconds", "default": 10.0, "minimum": 1.0, "maximum": 30.0, "step": 0.5, "precision": 1, "info": "Reference window used for cloning."},
+    {"name": "text_chunk_size", "type": "number", "label": "text_chunk_size", "label_en": "Segment size", "default": 300, "minimum": 20, "maximum": 2000, "step": 10, "precision": 0, "info": "Max codepoints per synthesis segment."}
+  ],
   "supertonic": [
     {"name": "voice", "type": "choice", "label": "voice（预置音色：M 男声 / F 女声）", "label_en": "voice (M = male, F = female presets)", "default": "M1", "choices": ["M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"]},
     {"name": "speaking_rate", "type": "slider", "label": "speaking_rate（语速倍率）", "label_en": "speaking_rate", "default": 1.05, "minimum": 0.5, "maximum": 2.0, "step": 0.05},
     {"name": "num_inference_steps", "type": "number", "label": "num_inference_steps（流匹配步数）", "label_en": "num_inference_steps", "default": 8, "minimum": 1, "step": 1, "precision": 0}
+  ],
+
+  "audio8_tts": [
+    {"name": "temperature", "type": "slider", "label": "temperature", "default": 0.7, "minimum": 0.0, "maximum": 2.0, "step": 0.05},
+    {"name": "top_p", "type": "slider", "label": "top_p", "default": 0.9, "minimum": 0.0, "maximum": 1.0, "step": 0.01},
+    {"name": "top_k", "type": "number", "label": "top_k", "default": 50, "minimum": 0, "step": 1, "precision": 0},
+    {"name": "max_tokens", "type": "number", "label": "max_tokens", "default": 1024, "minimum": 1, "step": 1, "precision": 0}
   ]
 }

@@ -9,10 +9,13 @@
 | Kroko Community ASR | `kroko_asr` | offline, streaming | [Kroko Community ASR](#kroko-community-asr) |
 | Higgs Audio STT | `higgs_audio_stt` | offline, streaming | [Higgs Audio STT](#higgs-audio-stt) |
 | Hviske ASR | `hviske_asr` | offline | [Hviske ASR](#hviske-asr) |
+| Moonshine Streaming ASR | `moonshine_asr` | offline, streaming | [Moonshine Streaming ASR](models/moonshine_asr.md) |
 | Nemotron ASR | `nemotron_asr` | offline, streaming | [Nemotron ASR](#nemotron-asr) |
+| Niagara ASR | `niagara_asr` | offline | [Niagara ASR](#niagara-asr) |
 | Parakeet-TDT | `parakeet_tdt` | offline, streaming | [Parakeet-TDT](#parakeet-tdt) |
 | SenseVoice-Small | `sense_asr` | offline, streaming | [SenseVoice-Small](#sensevoice-small) |
-| VibeVoice ASR | `vibevoice_asr` | offline | [VibeVoice ASR](#vibevoice-asr) |
+| VibeVoice ASR | `vibevoice_asr` | offline | [VibeVoice ASR](models/vibevoice_asr.md#vibevoice-asr) |
+| VibeVoice ASR Streaming 7B | `vibevoice_asr_streaming` | offline, streaming | [VibeVoice ASR Streaming 7B](models/vibevoice_asr.md#vibevoice-asr-streaming-7b) |
 | Voxtral Realtime | `voxtral_realtime` | offline, streaming | [Voxtral Realtime](#voxtral-realtime) |
 
 This page covers ASR models. Detailed Qwen3 ASR and forced-alignment notes live in [Qwen3 models](models/qwen3.md).
@@ -237,6 +240,21 @@ Compatibility aliases for existing requests:
 | `audio_chunk_duration_seconds` | `audio_chunk_duration_sec` |
 | `audio_chunk_duration` | `audio_chunk_duration_sec` |
 
+## Niagara ASR
+
+Niagara provides English offline transcription with 19M and 38M Batch checkpoints
+under the same `niagara_asr` family. Select the checkpoint through `--model`.
+
+```bash
+audiocpp_cli --task asr --family niagara_asr \
+  --model models/Niagara-ASR-GGUF/niagara-19m-batch.en-f32.gguf \
+  --backend cpu --threads 8 --audio speech.wav \
+  --text-out transcript.txt --log
+```
+
+Use `niagara-38m-batch.en-f32.gguf` for the 38M checkpoint. These are offline batch
+models; streaming and audio chunking are not supported.
+
 ## Nemotron ASR
 
 Nemotron ASR is an NVIDIA Nemotron 3.5 ASR RNNT model with offline and streaming sessions. It supports language prompts and optional token timestamp output.
@@ -327,63 +345,13 @@ chunking, server usage, and validation notes.
 
 ## VibeVoice ASR
 
-VibeVoice ASR is an offline ASR model with greedy, sampling, and beam-search decode paths. It can return transcription text and structured segment/speaker-turn output when the model produces timestamps.
+VibeVoice ASR covers the original offline ASR family and the new Streaming 7B
+family. The streaming family has its own dedicated GGUF repo and supports both
+offline and live streaming transcription. The Streaming 7B model can emit
+speaker-attributed text, but it does not produce timestamped segments.
 
-| Field | Value |
-|---|---|
-| Family | `vibevoice_asr` |
-| Model directory | `models/VibeVoice-ASR` |
-| Task | `asr` |
-| Modes | `offline` |
-| Required tokenizer files | `tokenizer.json`, `tokenizer_config.json`, `vocab.json`, and `merges.txt` in the model directory |
-| Output | Transcription text; optional segments through `--segments-out`; optional speaker turns through `--turns-out` |
-| Streaming | Not supported |
-| Timestamps | Segment and speaker-turn timestamps when produced |
-
-```bash
-audiocpp_cli --task asr --family vibevoice_asr --model models/VibeVoice-ASR-GGUF/vibevoice-asr-q8_0.gguf --backend cuda --audio assets/resources/sample_16k.wav --text-out transcript.txt
-```
-
-VibeVoice-ASR also accepts a standalone audio.cpp-native GGUF. Pass the shard
-index to merge all eight safetensors files while converting:
-
-```powershell
-audiocpp_gguf.exe --input models\VibeVoice-ASR\model.safetensors.index.json --output models\VibeVoice-ASR-Q8_0\model.gguf --type q8_0
-```
-
-Configuration and tokenizer assets are embedded by default, so the output
-directory may contain only `model.gguf`.
-
-Structured output:
-
-```bash
-audiocpp_cli --task asr --family vibevoice_asr --model models/VibeVoice-ASR-GGUF/vibevoice-asr-q8_0.gguf --backend cuda --audio meeting.wav --text "The recording is a meeting conversation." --text-out transcript.txt --segments-out segments.json --turns-out turns.json
-```
-
-With VAD chunking, provide the bundled Silero VAD model:
-
-```bash
-audiocpp_cli --task asr --family vibevoice_asr --model models/VibeVoice-ASR-GGUF/vibevoice-asr-q8_0.gguf --backend cuda --audio assets/resources/sample_16k.wav --audio-chunk-mode vad --session-option vibevoice_asr.vad_model_path=assets/framework/models/silero_vad --text-out transcript.txt
-```
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `--audio` | WAV path | required | Speech input. |
-| `--text` | text | empty string | Context prompt for the ASR request. |
-| `--language` | language code | `auto` | ASR language label. |
-| `--max-tokens` | integer | model default | Maximum generated transcript tokens. |
-| `--temperature` | float | model default | Sampling temperature; `0` uses deterministic decoding. |
-| `--top-p` | float | model default | Nucleus sampling probability. |
-| `--top-k` | integer | model default | Top-k sampling limit; `0` disables top-k filtering. |
-| `--num-beams` | integer | `1` | Beam count for deterministic beam search. |
-| `--repetition-penalty` | float | model default | Generation repetition penalty. |
-| `--seed` | integer | random if omitted | Sampling seed. |
-| `--audio-chunk-mode` | `auto`, `fixed`, `vad`, `none` | `auto` | Long-audio chunking mode. `auto` uses fixed chunks. |
-| `--audio-chunk-seconds` | float seconds | `1200` | Fixed audio chunk duration. |
-| `--text-out` | TXT path | not set | Transcript output. The transcript is also printed to stdout. |
-| `--segments-out` | JSON path | not set | Write structured ASR segments when produced. |
-| `--turns-out` | JSON path | not set | Write speaker turns when produced. |
-| `--session-option vibevoice_asr.vad_model_path=<path>` | model directory | `assets/framework/models/silero_vad` | Internal VAD model used by `--audio-chunk-mode vad`. |
+See [VibeVoice ASR models](models/vibevoice_asr.md) for package IDs, conversion
+notes, CLI examples, live server configuration, and request options.
 
 ## Voxtral Realtime
 
