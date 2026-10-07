@@ -875,6 +875,9 @@ HttpResponse error_response(int status, const std::string & message, const std::
 void serve_http(const std::string & host, int port, IHttpHandler & handler, ShutdownRequested shutdown_requested, uint64_t max_request_body_bytes) {
     SocketRuntime sockets;
     auto listen_socket = bind_listen_socket(host, port);
+    // The listener only binds after every eager model is resident, so this is
+    // the authoritative "load finished" marker for hosts rendering a load bar.
+    engine::debug::trace_log_scalar("server.load.progress", 1.0);
     std::cout << "audiocpp_server listening on http://" << host << ":" << port << "\n";
     while (!shutdown_requested()) {
         if (!wait_for_client(listen_socket.get(), 250)) {

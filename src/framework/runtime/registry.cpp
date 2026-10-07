@@ -133,13 +133,22 @@ std::unique_ptr<ILoadedVoiceModel> ModelRegistry::load(const ModelLoadRequest & 
     if (loader == nullptr) {
         throw std::runtime_error("no registered model loader can load: " + request.model_path.string());
     }
+    // Phase markers around the two long loader calls: hosts see exactly which
+    // stage a model is in (the runtime.model.family line below marks the end of
+    // the load stage) instead of interpolating across one opaque gap. The
+    // string_view wrap is required: a bare literal would resolve to the bool
+    // overload of trace_log_scalar (pointer conversion beats user-defined
+    // conversion) and print "1" instead of the phase name.
+    engine::debug::trace_log_scalar("runtime.load.phase", std::string_view("inspect"));
     const auto inspection = engine::debug::trace_log_enabled()
         ? std::optional<ModelInspection>(loader->inspect(request))
         : std::nullopt;
+    engine::debug::trace_log_scalar("runtime.load.phase", std::string_view("load"));
     auto model = loader->load(request);
     if (inspection.has_value()) {
         log_model_load_trace(*inspection, *model);
     }
+    engine::debug::trace_log_scalar("runtime.load.phase", std::string_view("loaded"));
     return model;
 }
 

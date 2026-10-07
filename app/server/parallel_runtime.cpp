@@ -1377,7 +1377,14 @@ HttpResponse ParallelServerState::handle_request(const HttpRequest & request, bo
 
 void ParallelServerState::load_models() {
     int eager_loaded = 0;
+    const int total_models = static_cast<int>(config_.models.size());
+    int model_index = 0;
     for (auto & config : config_.models) {
+        // Monotonic startup progress: hosts render the eager load as
+        // completed_models / configured_models around each (slow) load call.
+        engine::debug::trace_log_scalar(
+            "server.load.progress",
+            total_models > 0 ? static_cast<double>(model_index) / total_models : 0.0);
         auto loaded = make_model(std::move(config));
         if (!model_index_.emplace(loaded->config.id, models_.size()).second) {
             throw std::runtime_error("duplicate server model id: " + loaded->config.id);
@@ -1396,6 +1403,10 @@ void ParallelServerState::load_models() {
             }
         }
         models_.push_back(std::move(loaded));
+        ++model_index;
+        engine::debug::trace_log_scalar(
+            "server.load.progress",
+            total_models > 0 ? static_cast<double>(model_index) / total_models : 1.0);
     }
 }
 

@@ -172,7 +172,14 @@ public:
             name_ + ".buffer_mb",
             static_cast<double>(ggml_backend_buffer_get_size(buffer_)) / (1024.0 * 1024.0));
         debug::timing_log_scalar(name_ + ".buffer_name", std::string_view(ggml_backend_buffer_name(buffer_)));
-        for (auto & upload : pending_) {
+        // The weights phase is the longest observable load step on slow backends,
+        // so emit a throttled per-store progress scalar (<= ~21 lines per store,
+        // gated by trace_log_enabled) for hosts that render a load bar instead of
+        // interpolating between the sparse phase markers.
+        const size_t total = pending_.size();
+        const size_t emit_stride = total / 20 + 1;
+        for (size_t index = 0; index < total; ++index) {
+            auto & upload = pending_[index];
             if (upload.kind == PendingUploadKind::Tensor) {
                 upload.source->set_backend_tensor(
                     upload.tensor,
@@ -185,6 +192,11 @@ public:
                 upload_bytes(upload.tensor, upload.bytes);
                 upload.bytes.clear();
                 upload.bytes.shrink_to_fit();
+            }
+            if ((index + 1) % emit_stride == 0 || index + 1 == total) {
+                debug::trace_log_scalar(
+                    name_ + ".upload_progress",
+                    static_cast<double>(index + 1) / static_cast<double>(total));
             }
         }
         pending_.clear();
