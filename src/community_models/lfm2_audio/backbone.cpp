@@ -107,7 +107,8 @@ BackboneWeights load_weights(
         out.audio_vocab_size = audio.vocab_size;
     }
 
-    store.upload();
+    // No upload here: the session prepares every weight store up front
+    // (exact load-progress denominator) and commits them in build order.
     return out;
 }
 
@@ -502,6 +503,17 @@ struct Lfm2BackboneRuntime::Impl {
           execution(execution_in),
           weights(load_weights(*source, config, execution_in, audio)) {}
 
+    // The constructor only queues weights; upload() happens in
+    // upload_weights() (sessions) or lazily before the first use.
+    void ensure_uploaded() {
+        if (!weights_uploaded) {
+            weights.store->upload();
+            weights_uploaded = true;
+        }
+    }
+
+    bool weights_uploaded = false;
+
     DecodeGraph & require_started() {
         if (decode == nullptr || !started) {
             throw std::runtime_error("LFM2-Audio backbone step before start()");
@@ -536,8 +548,17 @@ Lfm2BackboneRuntime::Lfm2BackboneRuntime(
 
 Lfm2BackboneRuntime::~Lfm2BackboneRuntime() = default;
 
+void Lfm2BackboneRuntime::prepare_weights() {
+    impl_->weights.store->prepare();
+}
+
+void Lfm2BackboneRuntime::upload_weights() {
+    impl_->ensure_uploaded();
+}
+
 std::vector<float> Lfm2BackboneRuntime::start(
     const Lfm2Prompt & prompt, const Lfm2AudioEmbeddings & audio, int64_t max_steps, Lfm2DecodeCache cache) {
+    impl_->ensure_uploaded();
     const auto & config = impl_->config;
     const auto steps = static_cast<int64_t>(prompt.input_ids.size());
     const auto audio_tokens = static_cast<int64_t>(prompt.audio_positions.size());
@@ -634,6 +655,7 @@ Lfm2GenerationResult Lfm2BackboneRuntime::generate(
     const Lfm2Prompt & prompt,
     const Lfm2AudioEmbeddings & audio,
     const Lfm2GenerationOptions & options) {
+    impl_->ensure_uploaded();
     const auto steps = static_cast<int64_t>(prompt.input_ids.size());
     if (steps == 0 || options.max_new_tokens <= 0) {
         throw std::runtime_error("LFM2-Audio generation needs a prompt and a positive token budget");
